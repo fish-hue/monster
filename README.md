@@ -150,5 +150,3 @@ THE SOFTWARE.
 ```
 
 -----
-
-**What's the next step you'd like to work on?** (e.g., Drafting the `requirements.txt` file, or expanding the "Usage Examples" section?)
