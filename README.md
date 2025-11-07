@@ -47,8 +47,8 @@ Clone the repository and install the Python dependencies:
 
 ```bash
 # Clone the repository
-git clone <your-repository-url> monster-tool
-cd monster-tool
+git clone https://github.com/fish-hue/monster.git
+cd monster
 
 # Install Python dependencies (assuming you use a virtual environment)
 pip install flask flask_cors requests uuid
