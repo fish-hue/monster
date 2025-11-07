@@ -52,6 +52,11 @@ cd monster
 
 # Install Python dependencies (assuming you use a virtual environment)
 pip install flask flask_cors requests uuid
+
+# Or you can try requirements.txt
+
+# Install Python dependencies
+pip install -r requirements.txt
 ```
 
 ### 2\. Configure the Backend (`app.py`)
@@ -90,32 +95,67 @@ http://127.0.0.1:5000/
 
 The **Monster** frontend is an interactive, single-page application (`monster.html`).
 
-1.  **Configure Target:**
+### 1\. **Configure Target:**
 
       * Enter the **Target Origin** (e.g., `https://app.example.com`).
       * Enter the **Target Path** (e.g., `/api/protected`).
-      * Define the **Cookie Name** and **Cookie Value** you wish to inject.
+      * Define the **Cookie Name** and **Cookie Value** you wish to inject
 
-2.  **Perform a Basic Audit:**
+-----
 
-      * Click **`Basic Cookie Injection Test`**.
-      * The tool will:
-          * Inject the specified cookie.
-          * Execute a cross-origin `fetch()` request with `credentials: 'include'`.
-          * Log the response status and all **CORS Headers** (`Access-Control-Allow-*`).
-          * A successful request (e.g., status 200, 204) with the expected response body proves the vulnerability.
+### 2\. **Basic Credentialed CORS Test**
 
-3.  **Test for CSRF:**
+The primary function. This test quickly determines if the target endpoint is vulnerable to a simple CORS bypass allowing a cross-origin resource access with the user's browser-provided cookies.
 
-      * Change the **HTTP Method** (e.g., to `POST`).
-      * Define a state-changing **Request Body** (e.g., a JSON payload for a `/transfer-funds` endpoint).
-      * Click **`CSRF State-Change Test`**.
-      * A successful low-status code (e.g., 200-202) response confirms that an attacker's domain can force a credentialed, state-changing request against the target.
+  * **Goal:** Fetch data from `https://target.com/api/user-data` using an injected cookie.
+  * **Method:** Set the **HTTP Method** to `GET`. Enter the injected **Cookie Name/Value**. Click **`Basic Cookie Injection Test`**.
+  * **Successful Result:** The request receives a `200 OK` or similar status, and the response body contains protected data (e.g., JSON user profile). Crucially, the server logs will show a successful request originating from your attacker domain, proving the **CORS misconfiguration** (`Access-Control-Allow-Credentials: true` combined with a weak `Access-Control-Allow-Origin` policy).
 
-4.  **Automate Evidence:**
+-----
 
-      * Check the **`Auto-exfiltrate results to server`** checkbox.
-      * Run any test. The Python server's `/collect-evidence` endpoint will receive the full result and save it to the `cookie_injection_evidence.jsonl` file.
+### 3\. **CSRF State-Change Test (Proof of Concept)**
+
+This test moves from a read vulnerability (data exposure) to a write/state-change vulnerability (CSRF) by using a state-changing method (like `POST` or `PUT`) over the vulnerable CORS channel.
+
+  * **Goal:** Force a state change (e.g., changing an email address or transferring funds) on the target.
+  * **Method:**
+    1.  Set the **HTTP Method** to a state-changing verb (e.g., `POST`, `PUT`, or `DELETE`).
+    2.  Fill the **Request Body** with the necessary payload (e.g., `{"new_email": "attacker@mail.com"}`).
+    3.  Enter the injected **Cookie Name/Value** (optional, but necessary to target specific authenticated features).
+    4.  Click **`CSRF State-Change Test`**.
+  * **Successful Result:** The request returns a status code indicating a successful operation (e.g., `200 OK`, `204 No Content`, or `302 Found`). This is a definitive **Proof of Concept** for CSRF via CORS misconfiguration.
+
+-----
+
+### 4\. **Timing Attack Analysis (Advanced)**
+
+This method exploits the time difference between an authenticated request (using the injected cookie) and an unauthenticated request (without the cookie) to confirm if the cookie is being processed and, in some cases, to enumerate valid user IDs or session tokens.
+
+  * **Goal:** Determine if the server-side logic is taking *significantly* longer to process a request when the injected cookie is **valid** compared to when it's **invalid** or **missing**.
+  * **Method:**
+    1.  Click **`Timing Attack Analysis`**.
+    2.  Monster performs two requests to the target endpoint:
+          * **Request A:** With the injected cookie.
+          * **Request B:** Without the injected cookie.
+    3.  The tool displays the time difference in milliseconds.
+  * **Successful Result:** A clear, measurable time delta (e.g., **\>150ms difference**) between the two requests suggests the server is doing more work, likely a database lookup, for the authenticated request. This can confirm the **validity of an injected token** or identify if a **blind SQL injection** is possible via time-based techniques through the CORS channel.
+
+-----
+
+### 5\. **Automated Exfiltration and Canary Testing**
+
+Monster uses its integrated Flask server to serve an advanced canary token/payload and provides endpoints for evidence exfiltration.
+
+  * **Goal:** Capture evidence (like an SSRF callback or log data) to an external system (**n8n**) or store it locally.
+  * **Setup:** Ensure your `app.py` is configured with your **n8n webhook URLs**.
+  * **Method:**
+    1.  Check the **`Auto-exfiltrate results to server`** checkbox in the frontend.
+    2.  Run any test. The full response data (headers, body, timing) will be posted to the local Flask endpoint `/collect-evidence`, which then forwards it to your **n8n webhook** for permanent storage.
+    3.  For **SSRF/Canary testing** (e.g., for Next.js CVE-2025-57822 or similar flaws): The Python server generates a unique payload (e.g., `http://127.0.0.1:5000/canary/[UNIQUE_ID]`). If the target is vulnerable, the server will log a hit to this endpoint (either locally or via n8n), confirming the vulnerability.
+  * **Successful Result:**
+      * The browser log confirms a successful post to the local server.
+      * The `cookie_injection_evidence.jsonl` file on your local machine updates with the new log entry.
+      * (If n8n is active) Your n8n workflow receives a webhook payload containing the full evidence.
 
 -----
 
