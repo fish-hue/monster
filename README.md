@@ -1,174 +1,180 @@
------
+# Monster: Enhanced Cookie Injection & CORS Misconfiguration PoC
 
-# 😈 Monster: Enhanced Cookie Injection Module
+**Monster** is a **professional-grade, ethical penetration testing tool** designed to demonstrate **critical CORS misconfigurations** — specifically the dangerous combination of:
 
-**Monster** is a powerful, multi-vector tool designed for **ethical cybersecurity testing** of **Cross-Origin Resource Sharing (CORS)** configurations, with a specific focus on **credentialed cross-origin requests** and **cookie injection vulnerabilities**.
+```
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Credentials: true
+```
 
-It allows security researchers to simulate complex, multi-stage attacks from a client-side environment (HTML/JS) while utilizing a robust Python backend for proxying, evidence collection, and advanced server-side vulnerability checks (e.g., SSRF through Next.js CVE-2025-57822).
+This allows **any third-party site** to make **credentialed requests** (cookies included) to your domain — **leaking sensitive data** and enabling **CSRF via CORS**.
 
------
+Monster simulates a **real attacker-controlled site**, injects cookies, triggers requests, and **exfiltrates full evidence** to your server.
 
-## ✨ Key Features
+---
 
-  * **Multi-Vector Cookie Injection:** Tests standard, quoted, and versioned cookie injection mechanisms to maximize bypass potential.
-  * **CORS Configuration Audit:** Directly tests for dangerous combinations of `Access-Control-Allow-Origin` (especially reflection or wildcard `*`) and `Access-Control-Allow-Credentials: true`.
-  * **Targeted Attack Modes:**
-      * **Basic/Advanced Injection:** Execute immediate CORS-with-credentials requests with injected cookies.
-      * **CSRF State-Change Test:** Simulates state-changing operations (e.g., `POST`, `PUT`) to prove Cross-Site Request Forgery capability via CORS misconfiguration.
-      * **Timing Attack Analysis:** Compares response times of authenticated (injected cookie) vs. unauthenticated requests to identify potential user/session enumeration flaws.
-      * **Batch Endpoint Scanner:** Probes a list of common API endpoints for widespread vulnerability.
-  * **Evidence Collection Pipeline:** Automatically logs all requests, responses, CORS headers, and timing data.
-      * **Local Storage:** Saves results to the local Flask server (`cookie_injection_evidence.jsonl`).
-      * **Automated Exfiltration:** Integrates with **n8n** webhooks for out-of-band evidence collection (e.g., SSRF callbacks).
-  * **Integrated Server (Flask/Python):** Provides a robust local host with API endpoints for proxying, logging, and advanced SSRF/canary testing (e.g., Next.js CVE-2025-57822 probe).
+## Key Features
 
------
+| Feature | Description |
+|--------|-------------|
+| **Multi-Vector Cookie Injection** | `standard`, `quoted`, `version`, `dummy` vectors to maximize injection success |
+| **Direct CORS Test** | Raw `fetch(..., {credentials: 'include'})` to prove cookie leakage |
+| **Server-Side Proxy Bypass** | Flask proxy (`/proxy-fetch`) completely bypasses browser CORS |
+| **CSRF via CORS** | State-changing `POST`/`PUT`/`DELETE` with stolen cookies |
+| **Timing Attack Analysis** | Detect auth vs unauth processing time differences |
+| **Batch Endpoint Scanner** | Auto-probe 11 common API paths for leakage |
+| **Investigator Notes** | Write, send, and log observations with timestamps |
+| **Full Evidence Pipeline** | Auto-saved to `cookie_injection_evidence.jsonl` + `notes.log` |
+| **Local Download & Clipboard** | Export full JSON evidence or copy logs |
 
-## ⚠️ Ethical Use Statement
+---
 
-**MONSTER IS A TOOL FOR ETHICAL CYBERSECURITY TESTING AND RESEARCH ONLY.**
+## Ethical Use Only
 
-This tool is designed to be used by **authorized security professionals** in **controlled, permissioned environments**. Do not use this software against any target without **explicit, written permission** from the asset owner. The author and contributors are not responsible for any misuse or damage caused by this program.
+> **This tool is for authorized security testing only.**
 
------
+Use **only** on systems you own or have **explicit written permission** to test.
 
-## 🚀 Getting Started
+> **Do not use against any target without authorization.**
 
-### Prerequisites
+---
 
-1.  **Python 3.x**
-2.  **Flask** and **requests** Python libraries.
-3.  A modern web browser (for the HTML/JavaScript frontend).
-4.  (Optional, for full functionality) An instance of **n8n** (a workflow automation tool) running and accessible to collect canary/SSRF evidence.
+## Architecture
 
-### 1\. Installation
+```
+[Victim Site] ←(cookies)← [Monster HTML (attacker.com)] → [Flask + ngrok]
+```
 
-Clone the repository and install the Python dependencies:
+1. Victim is logged in on `https://target.com`
+2. Opens `monster.html` in another tab
+3. Monster injects session cookie via `document.cookie`
+4. Makes `fetch(target, {credentials: 'include'})`
+5. **Cookies are sent** due to misconfig
+6. **Response + headers** exfiltrated to your server
+
+---
+
+## Setup (5 Minutes)
+
+### 1. Start the Flask Server
 
 ```bash
-# Clone the repository
 git clone https://github.com/fish-hue/monster.git
 cd monster
-
-# Install Python dependencies (assuming you use a virtual environment)
-pip install flask flask_cors requests uuid
-
-# Or you can try requirements.txt
-
-# Install Python dependencies
-pip install -r requirements.txt
+python -m venv venv
+source venv/bin/activate  # Windows: venv\Scripts\activate
+pip install flask flask-cors requests
+python claude.py
 ```
 
-### 2\. Configure the Backend (`app.py`)
+> Runs on `http://localhost:3000`
 
-Open `app.py` and update the following lines with your n8n production webhook URLs:
-
-```python
-# ============================================================================
-# n8n CONFIGURATION - UPDATE THESE!
-# ============================================================================
-N8N_CANARY_WEBHOOK = "http://localhost:5678/webhook/your-canary-webhook-id"  # UPDATE THIS!
-N8N_QUERY_WEBHOOK = "http://localhost:5678/webhook/your-query-webhook-id"    # UPDATE THIS!
-```
-
-> **Note:** The N8N endpoints are crucial for testing out-of-band vulnerabilities and exfiltrating evidence outside of the browser environment. If n8n is not used, the tool will fall back to in-memory logging and local file storage.
-
-### 3\. Run the Server
-
-Start the Flask application. By default, it runs on `http://0.0.0.0:5000`.
+### 2. Expose with ngrok
 
 ```bash
-python app.py
+ngrok http 3000
 ```
 
-### 4\. Access the Frontend
+Copy the **HTTPS** URL (e.g., `https://abc123.ngrok.io`)
 
-Access the main interface by pointing your browser to the local server, which hosts the `monster.html` file (aliased as `/`):
+---
+
+## Usage
+
+### 1. Open `monster.html`
+
+Save the fixed HTML as `monster.html` and open in browser.
+
+### 2. Configure
+
+| Field | Example |
+|------|--------|
+| **Target Origin** | `https://portal.playground.example.com` |
+| **Target Path** | `/api/protected` |
+| **Cookie Name** | `session` |
+| **Cookie Value** | `INJECTED` |
+| **ngrok/Server URL** | `https://abc123.ngrok.io` |
+| **Evidence endpoint** | `/collect-evidence` |
+
+### 3. Test Connection
+
+Click **"Test Server Connection"** → green check.
+
+---
+
+## Attack Modes
+
+| Button | Purpose |
+|-------|--------|
+| **Basic Injection** | Quick test with one vector |
+| **Multi-Vector Injection** | Try all injection tricks |
+| **Direct CORS Test** | Raw credentialed fetch |
+| **Use Server Proxy** | Full CORS bypass via Flask |
+| **CSRF Test** | State-changing action |
+| **Batch Scanner** | Scan common endpoints |
+| **Timing Analysis** | Detect auth timing leaks |
+| **Full Attack Chain** | Inject → Request → Exfiltrate |
+
+---
+
+## Evidence Collection
+
+| File | Content |
+|------|--------|
+| `cookie_injection_evidence.jsonl` | Full attack results (JSONL) |
+| `notes.log` | Investigator observations |
+| Browser | **Download Evidence** or **Copy to Clipboard** |
+
+---
+
+## File Structure
 
 ```
-http://127.0.0.1:5000/
+monster/
+├── claude.py                     # Flask exfiltration server
+├── monster.html                  # Attack interface (fixed)
+├── cookie_injection_evidence.jsonl
+├── notes.log
+└── README.md
 ```
 
------
+---
 
-## 🔬 Usage Examples
-
-The **Monster** frontend is an interactive, single-page application (`monster.html`).
-
-### 1\. **Configure Target:**
-
-      * Enter the **Target Origin** (e.g., `https://app.example.com`).
-      * Enter the **Target Path** (e.g., `/api/protected`).
-      * Define the **Cookie Name** and **Cookie Value** you wish to inject
-
------
-
-### 2\. **Basic Credentialed CORS Test**
-
-The primary function. This test quickly determines if the target endpoint is vulnerable to a simple CORS bypass allowing a cross-origin resource access with the user's browser-provided cookies.
-
-  * **Goal:** Fetch data from `https://target.com/api/user-data` using an injected cookie.
-  * **Method:** Set the **HTTP Method** to `GET`. Enter the injected **Cookie Name/Value**. Click **`Basic Cookie Injection Test`**.
-  * **Successful Result:** The request receives a `200 OK` or similar status, and the response body contains protected data (e.g., JSON user profile). Crucially, the server logs will show a successful request originating from your attacker domain, proving the **CORS misconfiguration** (`Access-Control-Allow-Credentials: true` combined with a weak `Access-Control-Allow-Origin` policy).
-
------
-
-### 3\. **CSRF State-Change Test (Proof of Concept)**
-
-This test moves from a read vulnerability (data exposure) to a write/state-change vulnerability (CSRF) by using a state-changing method (like `POST` or `PUT`) over the vulnerable CORS channel.
-
-  * **Goal:** Force a state change (e.g., changing an email address or transferring funds) on the target.
-  * **Method:**
-    1.  Set the **HTTP Method** to a state-changing verb (e.g., `POST`, `PUT`, or `DELETE`).
-    2.  Fill the **Request Body** with the necessary payload (e.g., `{"new_email": "attacker@mail.com"}`).
-    3.  Enter the injected **Cookie Name/Value** (optional, but necessary to target specific authenticated features).
-    4.  Click **`CSRF State-Change Test`**.
-  * **Successful Result:** The request returns a status code indicating a successful operation (e.g., `200 OK`, `204 No Content`, or `302 Found`). This is a definitive **Proof of Concept** for CSRF via CORS misconfiguration.
-
------
-
-### 4\. **Timing Attack Analysis (Advanced)**
-
-This method exploits the time difference between an authenticated request (using the injected cookie) and an unauthenticated request (without the cookie) to confirm if the cookie is being processed and, in some cases, to enumerate valid user IDs or session tokens.
-
-  * **Goal:** Determine if the server-side logic is taking *significantly* longer to process a request when the injected cookie is **valid** compared to when it's **invalid** or **missing**.
-  * **Method:**
-    1.  Click **`Timing Attack Analysis`**.
-    2.  Monster performs two requests to the target endpoint:
-          * **Request A:** With the injected cookie.
-          * **Request B:** Without the injected cookie.
-    3.  The tool displays the time difference in milliseconds.
-  * **Successful Result:** A clear, measurable time delta (e.g., **\>150ms difference**) between the two requests suggests the server is doing more work, likely a database lookup, for the authenticated request. This can confirm the **validity of an injected token** or identify if a **blind SQL injection** is possible via time-based techniques through the CORS channel.
-
------
-
-### 5\. **Automated Exfiltration and Canary Testing**
-
-Monster uses its integrated Flask server to serve an advanced canary token/payload and provides endpoints for evidence exfiltration.
-
-  * **Goal:** Capture evidence (like an SSRF callback or log data) to an external system (**n8n**) or store it locally.
-  * **Setup:** Ensure your `app.py` is configured with your **n8n webhook URLs**.
-  * **Method:**
-    1.  Check the **`Auto-exfiltrate results to server`** checkbox in the frontend.
-    2.  Run any test. The full response data (headers, body, timing) will be posted to the local Flask endpoint `/collect-evidence`, which then forwards it to your **n8n webhook** for permanent storage.
-    3.  For **SSRF/Canary testing** (e.g., for Next.js CVE-2025-57822 or similar flaws): The Python server generates a unique payload (e.g., `http://127.0.0.1:5000/canary/[UNIQUE_ID]`). If the target is vulnerable, the server will log a hit to this endpoint (either locally or via n8n), confirming the vulnerability.
-  * **Successful Result:**
-      * The browser log confirms a successful post to the local server.
-      * The `cookie_injection_evidence.jsonl` file on your local machine updates with the new log entry.
-      * (If n8n is active) Your n8n workflow receives a webhook payload containing the full evidence.
-
------
-
-## 📄 License
-
-This project is licensed under the **MIT License**. See the `LICENSE` file (if included in your repository) for full details.
+## Sample Server Output
 
 ```text
-# Simplified MIT License
+EVIDENCE RECEIVED: cookie_injection_evidence
+Target: https://portal.playground.example.com/api/protected
+Success: True
+Status: 200
 
-The MIT License (MIT)
+NOTES RECEIVED
+Target: https://portal.playground.example.com
+Notes length: 342 chars
+Notes:
+2025-11-08 14:22: User logged in. Session cookie visible in request headers...
+```
 
-Copyright (c) 2025 Fish-Hue aka Knute
+---
+
+## Customization
+
+### Change Exfiltration Path
+
+Edit **Evidence endpoint** field in UI (default: `/collect-evidence`)
+
+### Add Custom Endpoints
+
+Edit `claude.py` to add new routes.
+
+---
+
+## License
+
+**MIT License**
+
+```text
+Copyright (c) 2025 fish-hue \ The Underdog \ aka Knute
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -180,13 +186,13 @@ furnished to do so, subject to the following conditions:
 The above copyright notice and this permission notice shall be included in
 all copies or substantial portions of the Software.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
 ```
 
------
+---
+
+**Monster** – *Show them the monster in their CORS config.*
+
+--- 
+
+*Happy (ethical) hunting.*
