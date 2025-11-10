@@ -307,7 +307,7 @@ def log_headers():
 
 @app.route("/")
 def index():
-    return send_from_directory(".", "cors_poc_2.html")
+    return send_from_directory(".", "monster.html")
 
 @app.route('/probe', methods=['POST'])
 def probe_endpoint():
