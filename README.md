@@ -72,10 +72,10 @@ python claude.py
 ### 2. Expose with ngrok
 
 ```bash
-ngrok http 3000
+ngrok http start --all
 ```
 
-Copy the **HTTPS** URL (e.g., `https://abc123.ngrok.io`)
+Copy the **HTTPS** URLs (e.g., `https://abc123.ngrok.app port 3000`, `https://xyz789.ngrok.app port 5000`)
 
 ---
 
@@ -83,7 +83,7 @@ Copy the **HTTPS** URL (e.g., `https://abc123.ngrok.io`)
 
 ### 1. Open `monster.html`
 
-Save the fixed HTML as `monster.html` and open in browser.
+Open the ngrok port 5000 URL server in your browser, this will host `monster.html` put the ngrok port 3000 server URL in your browser to see test results in the `Exfiltration` page.
 
 ### 2. Configure
 
