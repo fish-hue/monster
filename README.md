@@ -64,10 +64,12 @@ cd monster
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 pip install flask flask-cors requests
-python claude.py
+python exfil.py
+python -m http.server 8081
+ngrok start --all
 ```
 
-> Runs on `http://localhost:3000`
+> `exfil.py` Runs on `http://localhost:3000
 
 ### 2. Expose with ngrok
 
