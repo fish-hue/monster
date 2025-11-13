@@ -1,3 +1,12 @@
+```text
+╔════════════════════════════════════════════════════════════╗
+║  AUTHORIZED USE ONLY                                       ║
+║  This tool must only be used against systems you own or    ║
+║  have explicit written permission to test.                 ║
+║  Unauthorized access is illegal.                           ║
+╚════════════════════════════════════════════════════════════╝
+```
+
 # Monster: Enhanced Cookie Injection & CORS Misconfiguration PoC
 
 **Monster** is a **professional-grade, ethical penetration testing tool** designed to demonstrate **critical CORS misconfigurations** — specifically the dangerous combination of:
