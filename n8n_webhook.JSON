@@ -2,7 +2,7 @@
   "nodes": [
     {
       "parameters": {
-        "httpMethod": "POST",
+        "httpMethod": "GET",
         "path": "cookie-capture",
         "options": {}
       },
